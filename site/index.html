@@ -13,72 +13,97 @@
 <body>
 <header class="top"><div class="wrap">
   <a class="brand" href="#top">Football Hypergraph Analytics</a>
-  <nav><a href="#stable">Stable shape</a><a href="#mark">Mark players</a><a href="#missing">Missing player</a>
-    <a href="#defence">Defence</a><a href="#sequence">Who matters</a><a href="#ratings">Ratings</a></nav>
+  <nav><a href="#filters">Filters</a><a href="#teams">Teams</a><a href="#players">Players</a><a href="#defence">Defence</a><a href="#findings">Findings</a></nav>
 </div></header>
 
 <main class="wrap" id="top">
   <section class="hero">
-    <h1>A team's attack has a shape that lasts all season, and the few players behind most of its chances can be picked out from the first half</h1>
-    <p class="lede">Every chance is treated as the group of the last three players involved before the shot. From a
-      half-season of chances we count how few players took part in all of them, how many chances shared nobody, and
-      how much danger any set of players touches. Every test was written down before the data was opened.</p>
+    <h1>Which players does a team's attack run through, and how many separate routes to goal does it have?</h1>
+    <p class="lede">Every chance in two public data sets (men's and women's leagues, World Cups, Euros and other
+      tournaments, 2003 to 2025) is reduced to the last three players involved before the shot. Filter by source,
+      competition and season, then pick teams and players to see how much of the danger runs through whom, and how
+      that changes from season to season. Danger is measured in expected goals (xG): the chance a shot of that quality
+      is scored.</p>
     <div class="facts" id="facts"></div>
   </section>
 
-  <section id="stable">
-    <h2 id="stable-h">Concentration carries over: a team's numbers in the first half of the season predict its second half</h2>
-    <p class="note">One dot per team, 2015/16 Premier League, La Liga, Serie A and Ligue 1 (80 teams). First half = match
-      weeks 1–19, second half = 20–38. Correlation is Spearman's, with a 95% bootstrap interval over teams. The grey
-      line is "no change".</p>
-    <div class="row"><div class="seg" id="c-metric"></div><div class="seg" id="c-league"></div></div>
-    <div id="stable-chart" class="chart"></div>
-    <p class="take" id="stable-take"></p>
+  <section id="filters" class="filters">
+    <h2>Choose what to look at</h2>
+    <p class="note">These filters apply to the team, player and defence views. The open data covers every match of the
+      2015/16 Premier League, La Liga, Serie A and Ligue 1, four Women's Super League seasons and other women's leagues,
+      World Cups, Euros, Copa América 2024 and AFCON 2023, and Barcelona's La Liga matches from 2004/05 to 2020/21
+      (StatsBomb open data), plus every match of the 2017/18 Premier League, La Liga, Bundesliga, Serie A and Ligue 1,
+      the 2018 World Cup and Euro 2016 (Wyscout public data, Pappalardo et al. 2019, CC BY 4.0). A team is measured in a
+      season or tournament when it played at least 5 matches with 15 chances. Team histories join seasons by team name,
+      and the two providers sometimes name a club differently.</p>
+    <div class="row"><div class="seg" id="f-source"></div><div class="seg" id="f-gender"></div><div class="seg" id="f-kind"></div></div>
+    <div class="chips" id="f-comps" role="group" aria-label="Competitions"></div>
+    <p class="note" id="f-count"></p>
   </section>
 
-  <section id="mark">
-    <h2>Mark a few players and see how much of a team's danger runs through them</h2>
-    <p class="note">Coverage = share of the team's open-play expected goals (xG) from chances in which at least one
-      marked player was among the last three involved. Choosing on the first half and checking on the second is the
-      registered test: across teams, the transversal set covers 94% of later danger against 89% for the players with
-      most touches. Coverage shows involvement, not what would happen if a player were marked: teams adapt.</p>
-    <div class="row">
-      <label>Team <select id="c-team"></select></label>
-      <button class="btn" id="b-T">Fewest players touching every chance</button>
-      <button class="btn" id="b-C">Best 2 players</button>
-      <button class="btn" id="b-U">2 with most touches</button>
-      <button class="btn" id="b-clear">Clear</button>
-    </div>
-    <div class="grid2">
-      <div>
-        <div class="readout" id="mark-readout"></div>
-        <div class="chips" id="mark-chips" role="group" aria-label="Players"></div>
-        <p class="note" id="mark-team-note"></p>
+  <section id="teams">
+    <h2>Compare how teams create their chances</h2>
+    <p class="note">Search, then pick up to four team-seasons. Chances are possessions ending in an open-play shot;
+      the list shows the share of danger involving each team's top two players.</p>
+    <div class="explorer">
+      <aside class="picker" aria-label="Teams">
+        <input type="search" id="team-q" placeholder="Search teams, competitions, seasons" aria-label="Search teams">
+        <ul class="list" id="team-list"></ul>
+      </aside>
+      <div class="panel">
+        <div id="team-cards" class="cards"></div>
+        <h3>How much of each team's danger its best players were involved in</h3>
+        <p class="note">For each number of players, the set that was involved in the most xG. A steep start means the
+          attack depends on a few people; a slow climb means danger is spread. Hover for the players.</p>
+        <div id="team-curve" class="chart"></div>
+        <h3 id="strip-h">Where the selected teams sit</h3>
+        <div id="strip-top2" class="strip"></div>
+        <div id="strip-tau" class="strip"></div>
+        <div id="strip-nu" class="strip"></div>
+        <h3>The same teams across seasons and tournaments</h3>
+        <div class="row"><div class="seg" id="c-measure"></div></div>
+        <div id="team-history" class="chart"></div>
+        <p class="note" id="history-note"></p>
+        <h3 id="combo-h">Most dangerous combinations</h3>
+        <div class="table-wrap"><table id="combo-table"></table></div>
       </div>
-      <div><div id="mark-chart" class="chart"></div></div>
     </div>
-    <h3>The team's most dangerous combinations (first half)</h3>
-    <div class="table-wrap"><table id="mark-groups"></table></div>
   </section>
 
-  <section id="missing">
-    <h2 id="missing-h">Teams with fewer separate routes did not clearly lose more when their key player was missing</h2>
-    <p class="note">x-axis: separate routes in the first half (most chances sharing no player). y-axis: drop in
-      second-half xG, relative to each opponent's usual concession, in matches the key player missed against matches
-      the player started. Teams with at least 3 matches of each. Observational: rotation and injuries are not random.
-      The "key player" is often one of several tied players (see docs/POSTHOC.md, P1).</p>
-    <div class="row"><div class="seg" id="c-key"></div></div>
-    <div id="missing-chart" class="chart"></div>
-    <p class="take" id="missing-take"></p>
+  <section id="players">
+    <h2>Pick players to see how much of their team's danger runs through them</h2>
+    <p class="note">Search by player or team, and pick up to six players. Involvement means being among the last three
+      players before an open-play shot. The last player you pick is shown in detail.</p>
+    <div class="explorer">
+      <aside class="picker" aria-label="Players">
+        <input type="search" id="player-q" placeholder="Search players or teams" aria-label="Search players">
+        <label class="toggle"><input type="checkbox" id="player-only"> Only the team-seasons picked above</label>
+        <ul class="list" id="player-list"></ul>
+      </aside>
+      <div class="panel">
+        <p class="take" id="player-together"></p>
+        <h3>Share of their team's danger each player was involved in</h3>
+        <div id="player-bars" class="chart"></div>
+        <h3 id="career-h">Across seasons and tournaments</h3>
+        <div id="player-career" class="chart"></div>
+        <p class="note" id="career-note"></p>
+        <h3 id="partner-h">Who they create chances with</h3>
+        <p class="note" id="partner-note"></p>
+        <div id="partner-bars" class="chart"></div>
+        <h3>Ratings</h3>
+        <p class="note">Change in the team's xG difference per 90 minutes with the player on the pitch, others held
+          fixed. Rated only with at least 900 minutes on and 270 team minutes off in a half. These ratings repeat between
+          halves but largely reflect team strength: strong teams' regulars all rate high.</p>
+        <div class="table-wrap"><table id="player-ratings"></table></div>
+      </div>
+    </div>
   </section>
 
   <section id="defence">
-    <h2>Where the ball is decides most box entries; a hole in the block adds a little, and topology adds nothing</h2>
-    <p class="note">Model fitted on 40,000 opponent-half passes from Euro 2020 and the 2022 World Cup (360 frames),
-      tested on Euro 2024. Drag the defenders (orange) and the ball (black); attack goes to the right. The probability is
-      the fitted logistic model's chance that the attacking team has an event in the box within 10 seconds. Orange
-      lines join neighbouring defenders (the thick one is the widest gap); the blue circle is the largest empty circle
-      inside the block.</p>
+    <h2>Drag the defenders: where the ball is decides most box entries, and gaps in the block add a little</h2>
+    <p class="note">Fitted on 40,000 opponent-half passes from Euro 2020 and the 2022 World Cup, tested on Euro 2024.
+      Drag the defenders (orange) and the ball (black); the attack goes to the right. The thick orange line is the widest
+      gap between neighbouring defenders; the blue circle is the largest empty circle inside the block.</p>
     <div class="row">
       <button class="btn" id="b-compact">Compact block</button>
       <button class="btn" id="b-stretch">Stretched block</button>
@@ -91,31 +116,50 @@
         <p class="note" id="def-check"></p>
       </div>
     </div>
-    <h3 id="def-q-h">Raw box-entry rates fall as the hole grows, because big holes occur far from goal</h3>
+    <h3>Raw box-entry rates fall as the hole grows, because big holes appear in stretched defences far from goal</h3>
     <div class="row"><div class="seg" id="c-dmeasure"></div></div>
     <div id="def-q-chart" class="chart"></div>
-    <h3>What each block of features adds on the test tournament</h3>
+    <h3>What each kind of information adds to the prediction (Euro 2024)</h3>
     <div id="def-gain-chart" class="chart"></div>
+    <h3>Box entries by competition, and what the model predicts for each</h3>
+    <p class="note">Every competition with 360 frames. The model was fitted on Euro 2020 and the 2022 World Cup and tested
+      on Euro 2024; the others are scored as they are. Follows the men/women filter above.</p>
+    <div id="def-comp" class="chart"></div>
   </section>
 
-  <section id="sequence">
-    <h2 id="seq-h">Who is involved</h2>
+  <section id="findings">
+    <h2>What held up when tested on the second half of the season</h2>
+    <p class="note">Each test except the season-to-season view was written down before the data was opened.</p>
+    <p class="note" id="cov-check"></p>
+    <h3 id="stable-h">A team's attacking shape carries over from one half of the season to the next</h3>
+    <div class="row"><div class="seg" id="c-metric"></div></div>
+    <div id="stable-chart" class="chart"></div>
+    <p class="take" id="stable-take"></p>
+    <h3 id="s2s-h">From one season to the next</h3>
+    <p class="note">Teams measured in consecutive seasons of the same competition (descriptive; this was not a registered test).</p>
+    <div id="s2s-chart" class="chart"></div>
+    <p class="take" id="s2s-take"></p>
+    <h3>Teams with fewer separate routes did not clearly suffer more when their key player was missing</h3>
+    <p class="note">Each dot is a team whose most-involved player missed at least 3 and started at least 3 second-half
+      matches. Drop = how much less xG the team created when the player was missing, adjusted for the opponent.</p>
+    <div id="missing-chart" class="chart"></div>
+    <p class="take" id="missing-take"></p>
+    <div id="providers">
+    <h3>The two data providers agree on the same teams</h3>
+    <p class="note">The 2018 World Cup is in both sources. Each dot is a team: its top-two share computed from StatsBomb
+      events against the same share from Wyscout events, with possessions rebuilt by this project.</p>
+    <div id="prov-chart" class="chart"></div>
+    <p class="take" id="prov-take"></p>
+    </div>
+    <h3 id="seq-h">Who is on the ball</h3>
     <p class="note" id="seq-note"></p>
     <div id="seq-chart" class="chart"></div>
-    <p class="take" id="seq-take"></p>
-  </section>
-
-  <section id="ratings">
-    <h2 id="rat-h">Player ratings</h2>
-    <p class="note" id="rat-note"></p>
-    <div id="rat-chart" class="chart"></div>
   </section>
 </main>
 
-<footer class="wrap note">Data: StatsBomb open data (hudl/open-data, commit 4b73468). Analysis is this project's,
-  not StatsBomb's. Registered tests: <a href="https://github.com/symonyeal/Football-Hypergraph-Analytics/blob/main/docs/HYPOTHESES.md">HYPOTHESES.md</a>;
-  post hoc notes: <a href="https://github.com/symonyeal/Football-Hypergraph-Analytics/blob/main/docs/POSTHOC.md">POSTHOC.md</a>.
-  <code>data.js</code> is generated by <code>python -m fha.site</code>.<br>
+<footer class="wrap note">Data: StatsBomb open data (hudl/open-data, commit 4b73468) and the Wyscout public data set (Pappalardo et al.,
+  Scientific Data 6, 236, 2019; CC BY 4.0). Analysis is this project's, not the providers'. <a href="https://github.com/symonyeal/Football-Hypergraph-Analytics">Source, registered tests and
+  results</a>. <code>data.js</code> is generated by <code>python -m fha.site</code>.<br>
   <img src="https://raw.githubusercontent.com/hudl/open-data/4b73468fc5b0f1950f9f66fada70ad3a4f9327cb/img/SB%20-%20Icon%20Lockup%20-%20Colour%20positive.png" alt="StatsBomb" height="40"></footer>
 <script src="app.js"></script>
 </body>

@@ -76,3 +76,32 @@ th { color: var(--muted); font-size: .85em; font-weight: 600; }
 .warn { color: var(--bad); }
 .ok { color: var(--good); }
 footer { padding: 32px 16px 48px; }
+.explorer { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 24px; align-items: start; margin-top: 16px; }
+@media (max-width: 760px) { .explorer { grid-template-columns: 1fr; } }
+.picker { position: sticky; top: 60px; display: flex; flex-direction: column; gap: 8px; }
+@media (max-width: 760px) { .picker { position: static; } }
+.picker input[type=search] { width: 100%; }
+.list { list-style: none; margin: 0; padding: 0; max-height: 460px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; }
+.list li button { display: flex; width: 100%; gap: 8px; align-items: center; justify-content: space-between; text-align: left; background: none;
+  border: 0; border-bottom: 1px solid var(--border); padding: 7px 10px; font: inherit; color: var(--text); cursor: pointer; }
+.list li:last-child button { border-bottom: 0; }
+.list li button:hover { background: var(--surface); }
+.list li button[aria-pressed=true] { background: var(--surface); font-weight: 600; }
+.list .sw { width: 10px; height: 10px; border-radius: 50%; flex: none; border: 1px solid var(--axis); }
+.list .nm { flex: 1; min-width: 0; }
+.list .sub { color: var(--muted); font-size: .82em; display: block; font-weight: 400; }
+.list .val { color: var(--text-2); font-size: .85em; font-variant-numeric: tabular-nums; }
+.toggle { font-size: .9em; color: var(--text-2); display: flex; gap: 6px; align-items: center; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; margin: 12px 0; }
+.card { border-top: 4px solid var(--c); padding: 8px 0 0; }
+.card b { display: block; font-size: 1.05em; }
+.card p { margin: 4px 0 0; color: var(--text-2); font-size: .93em; }
+.strip { min-height: 120px; }
+.chip { border: 1px solid var(--border); }
+.empty { color: var(--muted); padding: 12px; }
+:root { --c1: #2a78d6; --c4: #eda100; }
+@media (prefers-color-scheme: dark) { :root:where(:not([data-theme="light"])) { --c1: #3987e5; --c4: #c98500; } }
+.list .grp { position: sticky; top: 0; background: var(--plane); color: var(--muted); font-size: .8em; font-weight: 600; padding: 4px 10px; border-bottom: 1px solid var(--border); }
+.cardh { background: none; border: 0; padding: 0; font: inherit; font-weight: 700; color: var(--text); cursor: pointer; text-align: left; }
+.filters { position: sticky; top: 48px; z-index: 5; background: var(--bg); padding: 12px 0; }
+@media (max-width: 760px) { .filters { position: static; } }

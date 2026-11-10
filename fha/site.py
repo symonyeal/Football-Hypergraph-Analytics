@@ -84,18 +84,39 @@ def checks(model):
     return out
 
 
+def providers(Zt, Yt):
+    """2018 World Cup in both sources: the same team measured from StatsBomb and from Wyscout data."""
+    from scipy.stats import spearmanr
+    norm = lambda s: s.lower().replace(" ", "")
+    sb_ = {norm(t["team"]): t for t in Zt if t["key"] == "43/3"}
+    wy_ = {norm(t["team"]): t for t in Yt if t["key"] == "wy/World_Cup"}
+    both = sorted(set(sb_) & set(wy_))
+    rows = [[sb_[k]["team"], sb_[k]["cov"]["2"][0], wy_[k]["cov"]["2"][0], sb_[k]["tau"], wy_[k]["tau"], sb_[k]["matches"]] for k in both]
+    out = {"rows": rows}
+    if len(rows) >= 5:
+        out["rho_top2"] = float(spearmanr([r[1] for r in rows], [r[2] for r in rows]).statistic)
+        out["rho_tau"] = float(spearmanr([r[3] for r in rows], [r[4] for r in rows]).statistic)
+    return out
+
+
 def main():
-    A, D, S, L, Z = load("attack"), load("defence"), load("sequence"), load("lineup"), load("seasons")
+    A, D, S, L, Z, Y = load("attack"), load("defence"), load("sequence"), load("lineup"), load("seasons"), load("wyscout")
     names = {}
-    for src in (A and A["names"], L and L.get("names"), Z and Z["names"]):   # later sources: common names
+    for src in (A and A["names"], L and L.get("names"), Z and Z["names"], Y and Y["names"]):   # later sources: common names
         names.update({str(k): v for k, v in (src or {}).items()})
     data = {"meta": {"source": "StatsBomb open data, hudl/open-data commit 4b73468"}, "names": names}
     if Z:
-        for t in Z["teams"]:
+        comps = [{**c, "source": "StatsBomb"} for c in Z["competitions"]] + (Y["competitions"] if Y else [])
+        teams = Z["teams"] + (Y["teams"] if Y else [])
+        for t in teams:
             certify(t)
         keys = ("key", "team", "team_id", "matches", "xg_per_match", "groups", "m", "xg", "tau", "tau_star", "nu", "cov", "solo")
-        data["seasons"] = {"competitions": Z["competitions"], "teams": [{k: t[k] for k in keys} for t in Z["teams"]]}
-        data["s2s"] = s2s(Z["teams"], Z["competitions"])
+        data["seasons"] = {"competitions": comps, "teams": [{k: t[k] for k in keys} for t in teams]}
+        data["s2s"] = s2s(teams, comps)
+        if Y:
+            data["wyscout"] = {"xg_model": Y["xg_model"], "source": Y["source"],
+                               "xg_check": {c["key"]: c["xg_check"] for c in Y["competitions"]}}
+            data["providers"] = providers(Z["teams"], Y["teams"])
     if A:
         full = {v: k for k, v in A["names"].items()}
         nick = lambda n: names.get(full.get(n, ""), n)

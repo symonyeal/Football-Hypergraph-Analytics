@@ -44,3 +44,25 @@ the ratings mean:
   from team strength rather than individual contribution.
 
 Candidate for a future registered round (not run): the same test on ratings centred within each team.
+
+## P3. Season to season, the attack shape does not clearly carry over (10 November 2026)
+
+Descriptive, not registered. Pairs of consecutive seasons of the same team in the same competition (38 pairs:
+Women's Super League, Barcelona in La Liga, Paris Saint-Germain in Ligue 1). Spearman correlation from one season to
+the next, 95% bootstrap interval: top-two share 0.34 (−0.03 to 0.64), players needed to cover every chance −0.26
+(−0.55 to 0.05), separate routes −0.31 (−0.61 to 0.01). None is distinguishable from zero. Within a season the
+shape holds (H1, 80 teams); across seasons these few pairs do not show it.
+
+## P4. Wyscout source: possession rebuild, xG transfer and provider agreement (10 November 2026)
+
+- Wyscout has no possession ids. Possessions are rebuilt as runs of on-ball events by one team; a lone uncontrolled
+  touch by the other team between two of the first team's events does not end a possession. On Serie A 2017/18 this
+  gives 174 possessions a match and attacking groups of 1, 2, 3 players in 4.9%, 8.7%, 86.4% of chances, against
+  StatsBomb 2015/16 Serie A's 0.9%, 19.5%, 79.6%. The providers differ; the rule is a reconstruction.
+- Wyscout has no xG. A logistic model on distance, angle and header, fitted to 18,076 StatsBomb 2015/16 Premier
+  League and La Liga open-play shots (1,804 goals; the fit predicts 1,802), predicts about 75% of Wyscout open-play
+  goals in every competition (Premier League 698 against 914). A uniform scale leaves every share and player count
+  unchanged; Wyscout xG per match is understated by about a quarter.
+- The 2018 World Cup is in both sources. For the 8 teams measured in both, the rank agreement is 0.94 for players
+  needed to cover every chance and 0.62 for the top-two share.
+- One StatsBomb 360 file (match 3845506) does not parse at the pinned commit; the defence stage skips and lists it.
