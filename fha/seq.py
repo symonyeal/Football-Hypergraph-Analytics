@@ -4,6 +4,19 @@ Legend: first the on-ball actions up to the cutoff, ctx context at the possessio
 """
 
 
+from sklearn.feature_extraction import DictVectorizer
+from sklearn.preprocessing import MaxAbsScaler
+
+
+def design(Dtr, Dte):
+    """Sparse matrices from feature dicts. Max-abs scaling leaves 0/1 indicators unchanged; standardizing them would
+    multiply a rare indicator by 1/sd and defeat the L2 penalty."""
+    dv = DictVectorizer()
+    Xtr = dv.fit_transform(Dtr)
+    sc = MaxAbsScaler().fit(Xtr)
+    return sc.transform(Xtr), sc.transform(dv.transform(Dte)), list(dv.feature_names_)
+
+
 def zone(l):
     """Cell of a 6 x 4 grid on the 120 x 80 pitch."""
     return f"z{min(int(l[0] // 20), 5)}_{min(int(l[1] // 20), 3)}"

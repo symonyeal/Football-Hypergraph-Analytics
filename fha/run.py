@@ -283,7 +283,6 @@ def vaep_rows(ev, mid, h, root):
 
 def stage_sequence(limit=None):
     import tempfile
-    from sklearn.feature_extraction import DictVectorizer
     from sklearn.model_selection import GroupKFold
     from fha import seq
     root = Path(tempfile.mkdtemp())
@@ -327,10 +326,7 @@ def stage_sequence(limit=None):
     L, res = {}, {"n": {"train": len(tr), "test": len(te)}, "rate": {"train": float(ytr.mean()), "test": float(yte.mean())},
                   "sets_kept": len(keep), "C": {}, "logloss": {}, "brier": {}, "calibration": {}}
     for k, blocks in MODELS.items():
-        dv = DictVectorizer()
-        Xtr, Xte = dv.fit_transform(X(tr, blocks)), dv.transform(X(te, blocks))
-        sc = StandardScaler(with_mean=False).fit(Xtr)
-        Xtr, Xte = sc.transform(Xtr), sc.transform(Xte)
+        Xtr, Xte, _ = seq.design(X(tr, blocks), X(te, blocks))
         cv = {}
         for C in (0.001, 0.01, 0.1, 1.0):
             ls = []
