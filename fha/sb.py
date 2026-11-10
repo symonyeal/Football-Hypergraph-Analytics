@@ -72,3 +72,40 @@ def cutoff(poss, a=3):
     if c is None:
         return {"alive": False, "y": 0, "P": frozenset(), "first": on}
     return {"alive": True, "y": int(any(openplay(e) for e in on[c + 1:])), "P": frozenset(involved(on[: c + 1])), "first": on[: c + 1]}
+
+
+def clock(s):
+    """'MM:SS' match clock to minutes."""
+    m, x = s.split(":")
+    return int(m) + int(x) / 60
+
+
+def u(c, period):
+    """Time axis with one 100-minute block per period, so first-half stoppage never overlaps the second half."""
+    return c + 100 * (period - 1)
+
+
+def stints(lu, h, a, shots, spans):
+    """Intervals of constant personnel within the played spans (start, end) on the u axis.
+    lu: lineups JSON; h, a: team ids; shots: (u, team, xG). Each stint: t0, t1, home and away player sets,
+    open-play xG of each side, manpower = |home| - |away|."""
+    end = max(b for _, b in spans)
+    on = {h: [], a: []}
+    for t in lu:
+        for p in t["lineup"]:
+            for q in p["positions"]:
+                b = u(clock(q["from"]), q.get("from_period") or 1)
+                c = u(clock(q["to"]), q.get("to_period") or 1) if q["to"] else end
+                on[t["team_id"]].append((p["player_id"], b, c))
+    cuts = sorted({x for sp in spans for x in sp} | {x for v in on.values() for _, b, c in v for x in (b, c) if 0 < x < end})
+    S = []
+    for t0, t1 in zip(cuts, cuts[1:]):
+        mid = (t0 + t1) / 2
+        if not any(a0 <= mid < a1 for a0, a1 in spans):
+            continue
+        H = {i for i, b, c in on[h] if b <= mid < c}
+        A = {i for i, b, c in on[a] if b <= mid < c}
+        S.append({"t0": t0, "t1": t1, "home": H, "away": A, "manpower": len(H) - len(A),
+                  "xg_home": sum(x for m, t, x in shots if t == h and t0 <= m < t1),
+                  "xg_away": sum(x for m, t, x in shots if t == a and t0 <= m < t1)})
+    return S

@@ -46,3 +46,32 @@ def test_cutoff_after_third_non_shot_action():
     assert not cutoff(short)["alive"]
     quiet = [P(0, 1, 2), ev(1, "Carry", 10, 2), P(2, 2, 3), ev(3, "Carry", 10, 3)]
     assert cutoff(quiet)["alive"] and cutoff(quiet)["y"] == 0
+
+
+def test_stints_split_at_substitutions():
+    from fha.sb import stints
+
+    def pl(i, a, b):
+        return {"player_id": i, "positions": [{"from": a, "to": b}]}
+
+    lu = [{"team_id": 10, "lineup": [pl(1, "00:00", None), pl(2, "00:00", "60:00"), pl(3, "60:00", None)]},
+          {"team_id": 20, "lineup": [pl(4, "00:00", None), pl(5, "00:00", None), {"player_id": 6, "positions": []}]}]
+    shots = [(30.0, 10, 0.5), (75.0, 20, 0.2), (80.0, 10, 0.1)]
+    S = stints(lu, 10, 20, shots, [(0.0, 90.0)])
+    assert [(s["t0"], s["t1"]) for s in S] == [(0.0, 60.0), (60.0, 90.0)]
+    assert S[0]["home"] == {1, 2} and S[0]["away"] == {4, 5}
+    assert S[1]["home"] == {1, 3}
+    assert abs(S[0]["xg_home"] - 0.5) < 1e-12 and S[0]["xg_away"] == 0
+    assert abs(S[1]["xg_home"] - 0.1) < 1e-12 and abs(S[1]["xg_away"] - 0.2) < 1e-12
+    assert S[0]["manpower"] == 0
+
+
+def test_stints_respect_periods():
+    from fha.sb import stints, u
+    lu = [{"team_id": 10, "lineup": [{"player_id": 1, "positions": [{"from": "00:00", "to": None, "from_period": 1, "to_period": None}]}]},
+          {"team_id": 20, "lineup": [{"player_id": 4, "positions": [{"from": "00:00", "to": None, "from_period": 1, "to_period": None}]}]}]
+    # First half ran to 47:00 (stoppage); second half 45:00-93:00. A shot at 46:30 of period 1 stays in period 1.
+    spans = [(u(0, 1), u(47, 1)), (u(45, 2), u(93, 2))]
+    S = stints(lu, 10, 20, [(u(46.5, 1), 10, 0.3), (u(46.5, 2), 10, 0.2)], spans)
+    assert [round(s["t1"] - s["t0"], 6) for s in S] == [47.0, 48.0]
+    assert [round(s["xg_home"], 6) for s in S] == [0.3, 0.2]

@@ -162,7 +162,31 @@ def sequence():
     (R / "sequence.md").write_text("\n".join(L) + "\n", encoding="utf-8")
 
 
+def lineup():
+    r = json.loads((R / "lineup.json").read_text(encoding="utf-8"))
+    L = ["# Lineup ratings (gated)", "", SRC,
+         "A player's rating is the change in the team's open-play xG difference per 90 minutes with the player on the pitch, "
+         "other players, manpower and score held fixed (ridge regression over stints of constant personnel). "
+         "A player is rated only with at least 900 minutes and at least 270 team minutes without the player over 5 or more matches.", "",
+         "| Half | Stints | Players | Eligible | Penalty | Home advantage (xG/90) | Per extra player (xG/90) | Per goal of lead (xG/90) |",
+         "| --- | --- | --- | --- | --- | --- | --- | --- |"]
+    for W, v in r["windows"].items():
+        L.append(f"| {W} | {v['stints']} | {v['players']} | {v['eligible']} | {v['lambda']:g} | {f(v['home_intercept'], 3)} | {f(v['manpower'], 3)} | {f(v['score_diff'], 3)} |")
+    L.append("")
+    if "H6" in r:
+        v, ci = r["H6"]
+        L.append(f"**H6.** Players eligible in both halves: {r['eligible_both']}. Split-half Spearman {f(v)} ({f(ci[0])} to {f(ci[1])}): {verdict(ci)}.")
+        if "top" in r:
+            L += ["", "| Highest rated | xG/90 | Lowest rated | xG/90 |", "| --- | --- | --- | --- |"]
+            L += [f"| {a} | {f(x, 3)} | {b} | {f(y, 3)} |" for (a, x), (b, y) in zip(r["top"], r["bottom"])]
+        else:
+            L.append("Ratings are not published: they do not repeat between halves.")
+    else:
+        L.append(f"**H6.** Only {r['eligible_both']} players are eligible in both halves; the test was not run and no ratings are published.")
+    (R / "lineup.md").write_text("\n".join(L) + "\n", encoding="utf-8")
+
+
 if __name__ == "__main__":
-    for s, g in (("attack", attack), ("defence", defence), ("sequence", sequence)):
+    for s, g in (("attack", attack), ("defence", defence), ("sequence", sequence), ("lineup", lineup)):
         if (R / f"{s}.json").exists():
             g()

@@ -1,6 +1,6 @@
 """Registered tests H1-H3 and H5 (docs/HYPOTHESES.md) on StatsBomb open data, streamed at a pinned commit.
 
-Usage: python -m fha.run attack|defence|sequence [--limit N]   (writes results/<stage>.json; --limit is a smoke test)
+Usage: python -m fha.run attack|defence|sequence|lineup [--limit N]   (writes results/<stage>.json; --limit is a smoke test)
 Raw data is never kept: it is held in memory, except one event file at a time in a temporary runner directory for
 socceraction (StatsBomb Public Data User Agreement 1.2.1).
 
@@ -350,12 +350,102 @@ def stage_sequence(limit=None):
     return res
 
 
+# ---------------------------------------------------------------- lineups (H6, gated)
+
+def stage_lineup(limit=None):
+    from scipy.sparse import csr_matrix, hstack
+    from sklearn.linear_model import Ridge
+    from sklearn.model_selection import GroupKFold
+    S = {"train": [], "test": []}       # (match, stint)
+    names, team_of = {}, {}
+    for c, s in LEAGUES:
+        ms = sorted(get(f"matches/{c}/{s}.json"), key=lambda m: m["match_date"])
+        for m in ms[:limit] + ms[-limit:] if limit else ms:
+            W = "train" if m["match_week"] <= 19 else "test"
+            ev, lu = get(f"events/{m['match_id']}.json"), get(f"lineups/{m['match_id']}.json")
+            h, a = m["home_team"]["home_team_id"], m["away_team"]["away_team_id"]
+            for t in lu:
+                for p in t["lineup"]:
+                    names[p["player_id"]] = p["player_name"]
+                    team_of[p["player_id"]] = t["team_id"]
+            T = lambda e: sb.u(e["minute"] + e["second"] / 60, e["period"])
+            spans = []
+            for P in sorted({e["period"] for e in ev if e["period"] <= 4}):
+                hs = [T(e) for e in ev if e["period"] == P and e["type"]["name"] in ("Half Start", "Half End")]
+                spans.append((min(hs), max(hs)))
+            shots = [(T(e), e["team"]["id"], e["shot"]["statsbomb_xg"]) for e in ev if sb.openplay(e)]
+            goals = [(T(e), e["team"]["id"]) for e in ev if (e["type"]["name"] == "Shot" and e["shot"]["outcome"]["name"] == "Goal") or e["type"]["name"] == "Own Goal For"]
+            for st in sb.stints(lu, h, a, shots, spans):
+                st["diff"] = max(-2, min(2, sum(1 if g == h else -1 for t, g in goals if t < st["t0"])))
+                S[W].append((m["match_id"], h, a, st))
+    out = {"windows": {}}
+    beta = {}
+    for W, R in S.items():
+        mins, off = Counter(), defaultdict(lambda: [0.0, set()])
+        played = defaultdict(set)
+        for mid, h, a, st in R:
+            d = st["t1"] - st["t0"]
+            for side in ("home", "away"):
+                for v in st[side]:
+                    mins[v] += d
+                    played[v].add(mid)
+        roster = defaultdict(set)
+        for v in played:
+            roster[team_of[v]].add(v)
+        for mid, h, a, st in R:
+            d = st["t1"] - st["t0"]
+            for team, side in ((h, "home"), (a, "away")):
+                for v in roster[team] - st[side]:
+                    off[v][0] += d
+                    off[v][1].add(mid)
+        ok = {v for v in mins if mins[v] >= 900 and off[v][0] >= 270 and len(off[v][1]) >= 5}
+        ids = sorted(mins)
+        ix = {v: i for i, v in enumerate(ids)}
+        rows, cols, vals, y, wt, g, Z = [], [], [], [], [], [], []
+        for r, (mid, h, a, st) in enumerate(R):
+            d = st["t1"] - st["t0"]
+            for v in st["home"]:
+                rows.append(r), cols.append(ix[v]), vals.append(1.0)
+            for v in st["away"]:
+                rows.append(r), cols.append(ix[v]), vals.append(-1.0)
+            Z.append([st["manpower"], st["diff"]])
+            y.append(90 * (st["xg_home"] - st["xg_away"]) / d)
+            wt.append(d)
+            g.append(mid)
+        n = len(ids)
+        X = csr_matrix((vals, (rows, cols)), shape=(len(R), n))
+        X = hstack([X, csr_matrix(np.array(Z, float))]).tocsr()
+        y, wt, g = np.array(y), np.array(wt), np.array(g)
+        cv = {}
+        for lam in (10.0, 100.0, 1000.0, 10000.0):
+            e = []
+            for i, j in GroupKFold(5).split(X, y, g):
+                f = Ridge(alpha=lam).fit(X[i], y[i], sample_weight=wt[i])
+                e.append(float(np.average((f.predict(X[j]) - y[j]) ** 2, weights=wt[j])))
+            cv[lam] = float(np.mean(e))
+        lam = min(cv, key=cv.get)
+        f = Ridge(alpha=lam).fit(X, y, sample_weight=wt)
+        beta[W] = {v: float(f.coef_[ix[v]]) for v in ok}
+        out["windows"][W] = {"stints": len(R), "players": n, "eligible": len(ok), "lambda": lam, "cv_mse": cv,
+                             "home_intercept": float(f.intercept_), "manpower": float(f.coef_[n]), "score_diff": float(f.coef_[n + 1])}
+    both = sorted(set(beta["train"]) & set(beta["test"]))
+    out["eligible_both"] = len(both)
+    if len(both) >= 10:
+        out["H6"] = rho([beta["train"][v] for v in both], [beta["test"][v] for v in both])
+        if out["H6"][1][0] > 0:
+            avg = sorted(((beta["train"][v] + beta["test"][v]) / 2, v) for v in both)
+            out["top"] = [[names[v], b] for b, v in avg[::-1][:15]]
+            out["bottom"] = [[names[v], b] for b, v in avg[:15]]
+    return out
+
+
 if __name__ == "__main__":
     a = sys.argv[1:]
     limit = int(a[a.index("--limit") + 1]) if "--limit" in a else None
     OUT.mkdir(exist_ok=True)
-    for s in [x for x in a if x in ("attack", "defence", "sequence")]:
-        r = {"attack": stage_attack, "defence": stage_defence, "sequence": stage_sequence}[s](limit)
+    stages = {"attack": stage_attack, "defence": stage_defence, "sequence": stage_sequence, "lineup": stage_lineup}
+    for s in [x for x in a if x in stages]:
+        r = stages[s](limit)
         name = f"{s}{'-smoke' if limit else ''}.json"
         (OUT / name).write_text(json.dumps(r, indent=1, default=str, ensure_ascii=False), encoding="utf-8")
         print(s, "written", OUT / name)
