@@ -31,3 +31,16 @@ Its verdict ("does not hold", $\Delta_{54} = +0.0153$) is withdrawn.
 Fix: `fha.seq.design` uses max-abs scaling, which leaves indicators at 0/1. `tests/test_seq.py` reproduces the defect
 on synthetic noise indicators (old design: 0.5625 against 0.4668 for context alone; the test fails) and passes with the
 fix. The registered models, grid, split and threshold are unchanged; H4 was rerun.
+
+## P2. Lineup ratings repeat between halves, but the penalty sits at the grid edge and top players cluster by team
+
+H6 holds as registered (split-half Spearman 0.52, interval 0.42 to 0.61, 283 players). Two observations limit what
+the ratings mean:
+
+- Cross-validation chose $\lambda = 10^4$, the largest value in the registered grid, in both halves. A larger penalty
+  might fit better; the grid was not extended after the result.
+- The fifteen highest-rated players are almost all from Paris Saint-Germain, Barcelona and Real Madrid. With few
+  substitutions, heavy shrinkage spreads a team's xG difference across its regulars, so split-half stability can come
+  from team strength rather than individual contribution.
+
+Candidate for a future registered round (not run): the same test on ratings centred within each team.

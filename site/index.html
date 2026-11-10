@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Football Hypergraph Analytics</title>
+<meta name="description" content="Which players a football attack runs through, how many separate routes it has, and the gaps in a defence before it breaks.">
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@3.0.1/plotly.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/delaunator@5.0.1/delaunator.min.js"></script>
+<script src="data.js"></script>
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <a class="brand" href="#top">Football Hypergraph Analytics</a>
+  <nav><a href="#stable">Stable shape</a><a href="#mark">Mark players</a><a href="#missing">Missing player</a>
+    <a href="#defence">Defence</a><a href="#sequence">Who matters</a><a href="#ratings">Ratings</a></nav>
+</div></header>
+
+<main class="wrap" id="top">
+  <section class="hero">
+    <h1>A team's attack has a shape that lasts all season, and the few players behind most of its chances can be picked out from the first half</h1>
+    <p class="lede">Every chance is treated as the group of the last three players involved before the shot. From a
+      half-season of chances we count how few players took part in all of them, how many chances shared nobody, and
+      how much danger any set of players touches. Every test was written down before the data was opened.</p>
+    <div class="facts" id="facts"></div>
+  </section>
+
+  <section id="stable">
+    <h2 id="stable-h">Concentration carries over: a team's numbers in the first half of the season predict its second half</h2>
+    <p class="note">One dot per team, 2015/16 Premier League, La Liga, Serie A and Ligue 1 (80 teams). First half = match
+      weeks 1–19, second half = 20–38. Correlation is Spearman's, with a 95% bootstrap interval over teams. The grey
+      line is "no change".</p>
+    <div class="row"><div class="seg" id="c-metric"></div><div class="seg" id="c-league"></div></div>
+    <div id="stable-chart" class="chart"></div>
+    <p class="take" id="stable-take"></p>
+  </section>
+
+  <section id="mark">
+    <h2>Mark a few players and see how much of a team's danger runs through them</h2>
+    <p class="note">Coverage = share of the team's open-play expected goals (xG) from chances in which at least one
+      marked player was among the last three involved. Choosing on the first half and checking on the second is the
+      registered test: across teams, the transversal set covers 94% of later danger against 89% for the players with
+      most touches. Coverage shows involvement, not what would happen if a player were marked: teams adapt.</p>
+    <div class="row">
+      <label>Team <select id="c-team"></select></label>
+      <button class="btn" id="b-T">Fewest players touching every chance</button>
+      <button class="btn" id="b-C">Best 2 players</button>
+      <button class="btn" id="b-U">2 with most touches</button>
+      <button class="btn" id="b-clear">Clear</button>
+    </div>
+    <div class="grid2">
+      <div>
+        <div class="readout" id="mark-readout"></div>
+        <div class="chips" id="mark-chips" role="group" aria-label="Players"></div>
+        <p class="note" id="mark-team-note"></p>
+      </div>
+      <div><div id="mark-chart" class="chart"></div></div>
+    </div>
+    <h3>The team's most dangerous combinations (first half)</h3>
+    <div class="table-wrap"><table id="mark-groups"></table></div>
+  </section>
+
+  <section id="missing">
+    <h2 id="missing-h">Teams with fewer separate routes did not clearly lose more when their key player was missing</h2>
+    <p class="note">x-axis: separate routes in the first half (most chances sharing no player). y-axis: drop in
+      second-half xG, relative to each opponent's usual concession, in matches the key player missed against matches
+      the player started. Teams with at least 3 matches of each. Observational: rotation and injuries are not random.
+      The "key player" is often one of several tied players (see docs/POSTHOC.md, P1).</p>
+    <div class="row"><div class="seg" id="c-key"></div></div>
+    <div id="missing-chart" class="chart"></div>
+    <p class="take" id="missing-take"></p>
+  </section>
+
+  <section id="defence">
+    <h2>Where the ball is decides most box entries; a hole in the block adds a little, and topology adds nothing</h2>
+    <p class="note">Model fitted on 40,000 opponent-half passes from Euro 2020 and the 2022 World Cup (360 frames),
+      tested on Euro 2024. Drag the defenders (orange) and the ball (black); attack goes to the right. The probability is
+      the fitted logistic model's chance that the attacking team has an event in the box within 10 seconds. Orange
+      lines join neighbouring defenders (the thick one is the widest gap); the blue circle is the largest empty circle
+      inside the block.</p>
+    <div class="row">
+      <button class="btn" id="b-compact">Compact block</button>
+      <button class="btn" id="b-stretch">Stretched block</button>
+      <button class="btn" id="b-hole">Open a hole</button>
+    </div>
+    <div class="grid2">
+      <div><svg class="pitch" id="pitch" viewBox="-2 -2 109 72" role="img" aria-label="Pitch with draggable defenders"></svg></div>
+      <div>
+        <div class="readout" id="def-readout"></div>
+        <p class="note" id="def-check"></p>
+      </div>
+    </div>
+    <h3 id="def-q-h">Raw box-entry rates fall as the hole grows, because big holes occur far from goal</h3>
+    <div class="row"><div class="seg" id="c-dmeasure"></div></div>
+    <div id="def-q-chart" class="chart"></div>
+    <h3>What each block of features adds on the test tournament</h3>
+    <div id="def-gain-chart" class="chart"></div>
+  </section>
+
+  <section id="sequence">
+    <h2 id="seq-h">Who is involved</h2>
+    <p class="note" id="seq-note"></p>
+    <div id="seq-chart" class="chart"></div>
+    <p class="take" id="seq-take"></p>
+  </section>
+
+  <section id="ratings">
+    <h2 id="rat-h">Player ratings</h2>
+    <p class="note" id="rat-note"></p>
+    <div id="rat-chart" class="chart"></div>
+  </section>
+</main>
+
+<footer class="wrap note">Data: StatsBomb open data (hudl/open-data, commit 4b73468). Analysis is this project's,
+  not StatsBomb's. Registered tests: <a href="https://github.com/symonyeal/Football-Hypergraph-Analytics/blob/main/docs/HYPOTHESES.md">HYPOTHESES.md</a>;
+  post hoc notes: <a href="https://github.com/symonyeal/Football-Hypergraph-Analytics/blob/main/docs/POSTHOC.md">POSTHOC.md</a>.
+  <code>data.js</code> is generated by <code>python -m fha.site</code>.<br>
+  <img src="https://raw.githubusercontent.com/hudl/open-data/4b73468fc5b0f1950f9f66fada70ad3a4f9327cb/img/SB%20-%20Icon%20Lockup%20-%20Colour%20positive.png" alt="StatsBomb" height="40"></footer>
+<script src="app.js"></script>
+</body>
+</html>

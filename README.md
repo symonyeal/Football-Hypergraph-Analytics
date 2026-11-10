@@ -1,27 +1,57 @@
 # Football Hypergraph Analytics
 
-Which players is a team's attack built around, how many separate routes to a shot does it have, and what does a
-defence look like just before it is broken?
+**Interactive site: https://symonyeal.github.io/Football-Hypergraph-Analytics/**
 
-Each chance is treated as the group of the last three players involved before the shot. From a team's chances over a
-half-season the project measures:
+Which players does a team's attack run through, how many separate routes to a shot does it have, and what does a
+defence look like just before it is broken? This project answers those questions from four complete 2015/16 league
+seasons (Premier League, La Liga, Serie A, Ligue 1) and the 360 freeze frames of Euro 2020, the 2022 World Cup and
+Euro 2024. Every test was written down before the data was opened ([registered hypotheses](docs/HYPOTHESES.md)); what
+was noticed afterwards is kept apart ([post hoc notes](docs/POSTHOC.md)).
 
-- how few players took part in every chance (concentration),
-- how many chances shared no player at all (separate routes),
-- how much of the team's expected goals two players were involved in,
-- which player most chances depend on.
+## What a chance is
 
-It then checks, on the other half of the season, whether those numbers are stable. It also checks whether teams with
-fewer separate routes create less when their key player is missing.
+A chance is any possession that ends in an open-play shot, and the people behind it are the last three players
+involved before the shot. A team's half-season of chances is then a list of small groups of players, each with the
+expected goals (xG) it produced. Three numbers describe that list:
 
-For defences, it measures the widest gap between neighbouring defenders and the largest empty circle inside the block
-at each pass. It then tests whether these predict the ball reaching the penalty box in the next ten seconds.
+- **Fewest players touching every chance.** If two players took part in every chance, the attack runs through them.
+  Most teams need nine or ten; Barcelona needed seven.
+- **Chances sharing no player.** The largest number of chances with no player in common: separate routes to goal.
+  Stopping all of them would take at least that many players.
+- **Share of danger two players touch.** Barcelona's Neymar and Suárez were involved in 87% of the team's open-play
+  xG in the first half of the season; the typical team's best pair touches about 70%.
 
-Every test was written down before the data was opened: [registered hypotheses](docs/HYPOTHESES.md). Results:
-[attack](results/attack.md), [defence](results/defence.md), once the data workflow has run.
+## What was found
 
-Data: StatsBomb open data (2015/16 Premier League, La Liga, Serie A and Ligue 1; Euro 2020, World Cup 2022 and Euro
-2024 360 frames). The data is streamed, never stored or redistributed here; only aggregate results are committed.
+**A team's attack has a shape that lasts the season.** All three numbers in the first half of the season predict the
+second half (correlation 0.42 to 0.48 across the 80 teams; every 95% interval is above zero).
+
+**The players behind a team's chances can be picked out from the first half.** Choosing the fewest players who touched
+every first-half chance covers 94% of the team's second-half danger, against 89% for the same number of players with
+the most touches (difference 5.8 points, interval 4.2 to 7.4).
+
+**Teams with fewer separate routes did not clearly lose more when their key player was missing.** The direction is the
+one expected (correlation −0.25), but with 32 eligible teams the interval runs from −0.56 to 0.10. The "key player" is
+often one of several equally ranked players, which weakens the test.
+
+**Who is on the ball adds nothing to predicting a shot beyond what they do and where.** For 214,000 possessions that
+were still alive after three actions, describing the actions (type, location, movement) improves predictions clearly;
+adding which players were involved, or which group of players, does not.
+
+**Where the ball is decides most box entries; gaps in a defence add a little, and topology adds nothing.** For 60,000
+passes, the ball's position carries most of the information. A wider gap between neighbouring defenders and a larger
+empty circle inside the block add a small, measurable amount. A topological summary of the defenders adds nothing
+beyond those two. Raw rates point the other way, because big holes appear in stretched defences far from goal: hold the
+ball position fixed and a bigger hole helps the attack.
+
+**Player ratings repeat between halves, but mostly measure the team.** Ratings of 283 regulars correlate 0.52 between
+halves, yet the top of the list is almost entirely Paris Saint-Germain, Barcelona and Real Madrid players. With few
+substitutions in football, a strong team's results are shared among its regulars.
+
+## Data and terms
+
+StatsBomb open data, `hudl/open-data` commit `4b73468`. The data is streamed by a GitHub workflow and never stored or
+redistributed here, as the StatsBomb Public Data User Agreement requires; only aggregate results are committed.
 
 ![StatsBomb](https://raw.githubusercontent.com/hudl/open-data/4b73468fc5b0f1950f9f66fada70ad3a4f9327cb/img/SB%20-%20Icon%20Lockup%20-%20Colour%20positive.png)
 
@@ -29,17 +59,20 @@ Data: StatsBomb open data (2015/16 Premier League, La Liga, Serie A and Ligue 1;
 
 | Path | Holds |
 | --- | --- |
-| `fha/sb.py` | StatsBomb events to attacking groups and sequence cutoffs |
-| `fha/attack.py` | Concentration and route measures (LP/ILP by HiGHS, minimum transversals by the Rust `tr`) |
+| `site/` | The interactive site; `site/data.js` is generated by `python -m fha.site` |
+| `results/` | Registered results as JSON and readable pages: [attack](results/attack.md), [defence](results/defence.md), [sequence](results/sequence.md), [lineup](results/lineup.md) |
+| `fha/sb.py` | StatsBomb events to attacking groups, sequence cutoffs and lineup stints |
+| `fha/attack.py` | Fewest-players, separate-routes and coverage measures (LP and ILP by HiGHS, minimum transversals by the Rust `tr`) |
 | `fha/defence.py` | Gap, hole, persistence and shape of the defenders |
-| `fha/run.py`, `fha/report.py` | Registered tests and the results pages |
+| `fha/seq.py` | Sequence features and the design matrix |
+| `fha/run.py`, `fha/report.py`, `fha/site.py` | Registered tests, results pages, site data |
 | `src/main.rs` | `tr`: minimal transversals by MMCS (`mcs` crate) |
 | `docs/MODEL.md` | Notation, measures and checks |
 
 ```text
 cargo build --release && pip install -r requirements.txt && python -m pytest -q
-python -m fha.run attack     # streams about 1,500 matches; run by the "derive" GitHub workflow
-python -m fha.report
+python -m fha.run attack      # or defence, sequence, lineup; run in full by the "derive" workflow
+python -m fha.report && python -m fha.site
 ```
 
 Licence: MIT. StatsBomb data remains subject to the StatsBomb Public Data User Agreement.
