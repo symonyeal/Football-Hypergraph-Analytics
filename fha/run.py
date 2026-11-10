@@ -1,6 +1,6 @@
 """Registered tests H1-H3 and H5 (docs/HYPOTHESES.md) on StatsBomb open data, streamed at a pinned commit.
 
-Usage: python -m fha.run attack|defence|sequence|lineup|seasons [--limit N]   (writes results/<stage>.json; --limit is a smoke test)
+Usage: python -m fha.run attack|defence|sequence|lineup|seasons|wyscout [--limit N]   (writes results/<stage>.json; --limit is a smoke test)
 Raw data is never kept: it is held in memory, except one event file at a time in a temporary runner directory for
 socceraction (StatsBomb Public Data User Agreement 1.2.1).
 
@@ -21,7 +21,7 @@ from sklearn.metrics import log_loss
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
-from fha import attack, defence, sb
+from fha import attack, defence, sb, wy
 
 SHA = "4b73468fc5b0f1950f9f66fada70ad3a4f9327cb"
 RAW = f"https://raw.githubusercontent.com/hudl/open-data/{SHA}/data"
@@ -102,7 +102,7 @@ def measures(Fw, U):
     nv, _ = attack.nu(F, n)
     cv = {b: attack.cov(F, w, n, b) for b in sorted({1, 2, 3, 4, 5, len(Tt)})}
     solo = sum(wi for A, wi in Fw if len(A) == 1) / sum(w)
-    vs = max(range(n), key=lambda i: (x[i], U[ids[i]], -ids[i]))
+    vs = max(range(n), key=lambda i: (x[i], U[ids[i]], -i))   # ids are sorted by (-usage, id): -i breaks ties by smaller id
     return {"n": n, "m": len(F), "xg": sum(w), "tau": len(Tt), "tau_star": ts, "nu": nv, "count_min": len(T),
             "T_tau": [ids[i] for i in Tt], "cov": {b: [s, [ids[i] for i in t]] for b, (s, t) in cv.items()},
             "x_star": {ids[i]: x[i] for i in range(n) if x[i] > 1e-9}, "v_star": ids[vs],
@@ -430,6 +430,93 @@ def stage_seasons(limit=None):
     return out
 
 
+# ---------------------------------------------------------------- Wyscout public data (descriptive)
+
+FIG = "https://ndownloader.figshare.com/files/"
+WY_FILES = {"events": "14464685", "matches": "14464622", "players": "15073721", "teams": "15073697"}
+WY_COMP = {"England": ("Premier League", "2017/2018", False), "Spain": ("La Liga", "2017/2018", False),
+           "Germany": ("1. Bundesliga", "2017/2018", False), "Italy": ("Serie A", "2017/2018", False),
+           "France": ("Ligue 1", "2017/2018", False), "World_Cup": ("FIFA World Cup", "2018", True),
+           "European_Championship": ("UEFA Euro", "2016", True)}
+
+
+def xg_model(limit=None):
+    """Logistic xG on (distance, angle, header) fitted to StatsBomb 2015/16 Premier League and La Liga open-play
+    shots, for Wyscout shots, which carry no xG. Returns the fitted model and its fit summary."""
+    from concurrent.futures import ThreadPoolExecutor
+    X, y = [], []
+    for c, s in ((2, 27), (11, 27)):
+        ms = get(f"matches/{c}/{s}.json")
+        with ThreadPoolExecutor(8) as ex:
+            for ev in ex.map(lambda m: get(f"events/{m['match_id']}.json"), ms[:limit] if limit else ms):
+                for e in ev:
+                    if sb.openplay(e):
+                        bx, by = sb.metres(e["location"])
+                        dx, dy = 105 - bx, 34 - by
+                        X.append([np.hypot(dx, dy), abs(np.arctan2(7.32 * dx, dx * dx + dy * dy - 3.66 ** 2)), int(e["shot"]["body_part"]["name"] == "Head")])
+                        y.append(int(e["shot"]["outcome"]["name"] == "Goal"))
+    f = make_pipeline(StandardScaler(), LogisticRegression(max_iter=1000)).fit(np.array(X), np.array(y))
+    p = f.predict_proba(np.array(X))[:, 1]
+    return f, {"shots": len(y), "goals": int(sum(y)), "predicted_goals": float(p.sum()), "features": ["distance", "angle", "header"],
+               "coef": f[-1].coef_[0].tolist(), "intercept": float(f[-1].intercept_[0])}
+
+
+def stage_wyscout(limit=None):
+    """Attack measures for every team with at least MIN_MATCHES matches in the Wyscout public data (2017/18 five
+    leagues, World Cup 2018, Euro 2016). xG from xg_model; calibration against Wyscout goals is reported."""
+    import io
+    import zipfile
+    import os
+    local = os.environ.get("FHA_WY_DIR")   # a folder holding the four figshare files, for local smoke tests
+    name = {"events": "events.zip", "matches": "matches.zip", "players": "players.json", "teams": "teams.json"}
+    blob = {k: (Path(local, name[k]).read_bytes() if local else urllib.request.urlopen(FIG + v, timeout=600).read()) for k, v in WY_FILES.items()}
+    players = {p["wyId"]: p for p in json.loads(blob["players"])}
+    teams = {t["wyId"]: wy.unescape(t["name"]) for t in json.loads(blob["teams"])}
+    f, fit = xg_model(limit)
+    zE, zM = zipfile.ZipFile(io.BytesIO(blob["events"])), zipfile.ZipFile(io.BytesIO(blob["matches"]))
+    out = {"source": "Wyscout public data (Pappalardo et al. 2019, CC BY 4.0)", "xg_model": fit, "competitions": [], "teams": [], "names": {}}
+    for nm, (comp, season, intl) in WY_COMP.items():
+        ms = json.loads(zM.read(f"matches_{nm}.json"))
+        ms = ms[:limit] if limit else ms
+        mids = {m["wyId"] for m in ms}
+        played = Counter(int(t) for m in ms for t in m["teamsData"])
+        ev = [e for e in json.loads(zE.read(f"events_{nm}.json")) if e["matchId"] in mids]
+        by = defaultdict(list)
+        for e in ev:
+            by[e["matchId"]].append(e)
+        key = f"wy/{nm}"
+        rec = {"key": key, "competition": comp, "season": season, "gender": "male", "international": intl, "matches": len(ms),
+               "teams": len(played), "measured": 0, "matches_360": 0, "source": "Wyscout"}
+        out["competitions"].append(rec)
+        keep = {t for t, n in played.items() if n >= MIN_MATCHES}
+        G, U = defaultdict(list), defaultdict(Counter)
+        goals = pred = 0.0
+        for E in by.values():
+            for g in wy.attack_groups(E):
+                x = float(f.predict_proba(np.array([s[:3] for s in g["shots"]]))[:, 1].sum())
+                pred += x
+                goals += sum(s[3] for s in g["shots"])
+                if g["team"] in keep:
+                    G[g["team"]].append((g["A"], x))
+            for e in E:
+                if e["teamId"] in keep and wy.onball(e) and e["playerId"]:
+                    U[e["teamId"]][f"w{e['playerId']}"] += 1
+        rec["xg_check"] = {"open_play_goals": goals, "predicted": pred}
+        for t in sorted(keep):
+            if len(G[t]) < MIN_CHANCES:
+                continue
+            M = measures(G[t], U[t])
+            out["teams"].append({"key": key, "team": teams.get(t, str(t)), "team_id": f"w{t}", "matches": played[t],
+                                 "xg_per_match": sum(x for _, x in G[t]) / played[t], "groups": attack.agg(G[t]),
+                                 **{k: M[k] for k in ("m", "xg", "tau", "tau_star", "nu", "cov", "T_tau", "usage", "solo")}})
+            rec["measured"] += 1
+            for p in {v for A, _ in G[t] for v in A}:
+                q = players.get(int(p[1:]))
+                if q:
+                    out["names"][p] = wy.unescape(q["shortName"])
+    return out
+
+
 # ---------------------------------------------------------------- lineups (H6, gated)
 
 def stage_lineup(limit=None):
@@ -526,7 +613,7 @@ if __name__ == "__main__":
     a = sys.argv[1:]
     limit = int(a[a.index("--limit") + 1]) if "--limit" in a else None
     OUT.mkdir(exist_ok=True)
-    stages = {"attack": stage_attack, "defence": stage_defence, "sequence": stage_sequence, "lineup": stage_lineup, "seasons": stage_seasons}
+    stages = {"attack": stage_attack, "defence": stage_defence, "sequence": stage_sequence, "lineup": stage_lineup, "seasons": stage_seasons, "wyscout": stage_wyscout}
     for s in [x for x in a if x in stages]:
         r = stages[s](limit)
         name = f"{s}{'-smoke' if limit else ''}.json"

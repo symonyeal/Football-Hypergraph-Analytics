@@ -33,20 +33,39 @@ def load(s):
     return json.loads(p.read_text(encoding="utf-8")) if p.exists() else None
 
 
-def team_block(name, v, N):
-    """One team: per window the groups, the published sets and measures. Certificate: cov(b) recomputed from groups."""
-    out = {"league": v["league"]}
-    for W in ("train", "test"):
-        a = v[W]
-        G = a["groups"]
-        F, w = [set(g[0]) for g in G], [g[2] for g in G]
-        for b, (share, T) in a["cov"].items():
-            assert abs(attack.covered(T, F, w) - share) < 1e-9, (name, W, b)
-        assert abs(sum(w) - a["xg"]) < 1e-6, (name, W)
-        out[W] = {"groups": G, "tau": a["tau"], "tau_star": a["tau_star"], "nu": a["nu"], "m": a["m"], "xg": a["xg"],
-                  "T": a["T_tau"], "cov": {b: c for b, c in a["cov"].items()}, "usage": a["usage"][:25], "solo": a["solo"]}
-    ids = {p for W in ("train", "test") for g in out[W]["groups"] for p in g[0]} | set(out["train"]["usage"])
-    return out, {str(p): N[str(p)] for p in ids if str(p) in N}
+def certify(t):
+    """cov(b) recomputed from the aggregated groups equals the published value; group xG sums to the total."""
+    F, w = [set(g[0]) for g in t["groups"]], [g[2] for g in t["groups"]]
+    for b, (share, P) in t["cov"].items():
+        assert abs(attack.covered(P, F, w) - share) < 1e-9, (t["team"], t["key"], b)
+    assert abs(sum(w) - t["xg"]) < 1e-6, (t["team"], t["key"])
+
+
+def s2s(teams, comps):
+    """Consecutive seasons of the same team in the same competition: pairs and Spearman with a bootstrap interval."""
+    from scipy.stats import spearmanr
+    meta = {c["key"]: c for c in comps}
+    by = {}
+    for t in teams:
+        c = meta[t["key"]]
+        by.setdefault((c["competition"], t["team_id"]), []).append((int(c["season"][:4]), c["season"], t))
+    out = {}
+    for k, get in (("tau", lambda t: t["tau"]), ("nu", lambda t: t["nu"]), ("top2", lambda t: t["cov"]["2"][0])):
+        P, used = [], set()
+        for (comp, _), L in by.items():
+            L.sort(key=lambda r: r[0])
+            for (y0, s0, a), (y1, s1, b) in zip(L, L[1:]):
+                if y1 - y0 == 1:
+                    P.append([a["team"], f"{comp} {s0} to {s1}", get(a), get(b)])
+                    used.add(comp)
+        rho = None
+        if len(P) >= 8:
+            x, y = np.array([p[2] for p in P], float), np.array([p[3] for p in P], float)
+            g = np.random.default_rng(0)
+            v = [spearmanr(x[i], y[i]).statistic for i in (g.integers(0, len(P), len(P)) for _ in range(2000))]
+            rho = [float(spearmanr(x, y).statistic), [float(np.nanpercentile(v, 2.5)), float(np.nanpercentile(v, 97.5))]]
+        out[k] = {"pairs": P, "rho": rho, "comps": sorted(used)}
+    return out
 
 
 def checks(model):
@@ -66,21 +85,31 @@ def checks(model):
 
 
 def main():
-    A, D, S, L = load("attack"), load("defence"), load("sequence"), load("lineup")
-    data = {"meta": {"source": "StatsBomb open data, hudl/open-data commit 4b73468"}}
+    A, D, S, L, Z = load("attack"), load("defence"), load("sequence"), load("lineup"), load("seasons")
+    names = {}
+    for src in (A and A["names"], L and L.get("names"), Z and Z["names"]):   # later sources: common names
+        names.update({str(k): v for k, v in (src or {}).items()})
+    data = {"meta": {"source": "StatsBomb open data, hudl/open-data commit 4b73468"}, "names": names}
+    if Z:
+        for t in Z["teams"]:
+            certify(t)
+        keys = ("key", "team", "team_id", "matches", "xg_per_match", "groups", "m", "xg", "tau", "tau_star", "nu", "cov", "solo")
+        data["seasons"] = {"competitions": Z["competitions"], "teams": [{k: t[k] for k in keys} for t in Z["teams"]]}
+        data["s2s"] = s2s(Z["teams"], Z["competitions"])
     if A:
-        N, teams, names = A["names"], {}, {}
-        for t, v in A["teams"].items():
-            teams[t], nm = team_block(t, v, N)
-            names.update(nm)
-        data["attack"] = {"teams": teams, "names": names, "H1": A["H1"], "H1_q01": A["sensitivity_q0.1"], "H2": A["H2"], "H3": A["H3"]}
+        full = {v: k for k, v in A["names"].items()}
+        nick = lambda n: names.get(full.get(n, ""), n)
+        halves = [{"team": t, "league": v["league"], **{W: {"tau": v[W]["tau"], "nu": v[W]["nu"], "top2": v[W]["cov"]["2"][0]}
+                                                        for W in ("train", "test")}} for t, v in A["teams"].items()]
+        H3 = {k: {**h, "teams": [[r[0], nick(r[1]), r[2], r[3], r[4]] for r in h["teams"]]} for k, h in A["H3"].items()}
+        data["attack"] = {"halves": halves, "H1": A["H1"], "H1_q01": A["sensitivity_q0.1"], "H2": A["H2"], "H3": H3}
     if D:
         data["defence"] = {k: D[k] for k in D if k != "coef"}
         chk = checks(D["model"]["gaps"])
     if S:
         data["sequence"] = S
     if L:
-        data["lineup"] = L
+        data["lineup"] = {k: L[k] for k in L if k != "names"}
     data = plain(data)
     if D:
         data["defence"]["model"] = D["model"]   # full precision: the browser recomputes with these
