@@ -24,7 +24,7 @@ jobs:
       - run: cargo build --release
       - run: pip install -r requirements.txt
       - if: inputs.stage == 'sequence'
-        run: pip install "socceraction==1.5.3"
+        run: pip install "socceraction==1.5.3" "multimethod<2"
       - run: python -m fha.run ${{ inputs.stage }} ${{ inputs.limit && format('--limit {0}', inputs.limit) || '' }}
       - if: inputs.limit == ''
         run: python -m fha.report
