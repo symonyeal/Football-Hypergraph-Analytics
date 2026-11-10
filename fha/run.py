@@ -32,14 +32,14 @@ B, SEED = 2000, 0
 
 
 def get(path):
-    for t in range(5):
+    for t in range(8):   # retries also cover truncated bodies (JSONDecodeError) under parallel fetches
         try:
-            with urllib.request.urlopen(f"{RAW}/{path}", timeout=120) as r:
+            with urllib.request.urlopen(f"{RAW}/{path}", timeout=180) as r:
                 return json.loads(r.read())
         except Exception:
-            if t == 4:
+            if t == 7:
                 raise
-            time.sleep(2 ** t)
+            time.sleep(min(60, 2 ** t))
 
 
 def boot(f, n, seed=SEED):
@@ -219,7 +219,7 @@ def stage_defence(limit=None):
         if not ms:
             continue
         label[key] = f"{c['competition_name']} {c['season_name']}"
-        with ThreadPoolExecutor(8) as ex:
+        with ThreadPoolExecutor(4) as ex:
             for rows in ex.map(passes, ms[:limit] if limit else ms):
                 for r in rows:
                     r["comp"] = key
