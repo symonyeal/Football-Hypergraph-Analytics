@@ -1,0 +1,166 @@
+{
+ "windows": {
+  "train": {
+   "stints": 8724,
+   "players": 1924,
+   "eligible": 596,
+   "lambda": 10000.0,
+   "cv_mse": {
+    "10.0": 9.541455846948406,
+    "100.0": 5.781812216267802,
+    "1000.0": 5.090343296337216,
+    "10000.0": 5.052441666006792
+   },
+   "home_intercept": 0.19960526788826569,
+   "manpower": 0.022183621401909423,
+   "score_diff": -0.031730778242155
+  },
+  "test": {
+   "stints": 8707,
+   "players": 1969,
+   "eligible": 592,
+   "lambda": 10000.0,
+   "cv_mse": {
+    "10.0": 10.663133074859179,
+    "100.0": 6.514562493549205,
+    "1000.0": 5.834202827163889,
+    "10000.0": 5.829969159030653
+   },
+   "home_intercept": 0.3066701798156014,
+   "manpower": 0.049155660952286157,
+   "score_diff": -0.02545698905074817
+  }
+ },
+ "eligible_both": 283,
+ "H6": [
+  0.5232848107364584,
+  [
+   0.4165549609514329,
+   0.6117618235088316
+  ]
+ ],
+ "top": [
+  [
+   "Zlatan Ibrahimović",
+   0.09481126469985621
+  ],
+  [
+   "Karim Benzema",
+   0.07141240957102751
+  ],
+  [
+   "Edinson Roberto Cavani Gómez",
+   0.06730251332386275
+  ],
+  [
+   "Ángel Fabián Di María Hernández",
+   0.06563493642612826
+  ],
+  [
+   "Jordi Alba Ramos",
+   0.06419016524085486
+  ],
+  [
+   "Ivan Rakitić",
+   0.06338880581586057
+  ],
+  [
+   "Alexis Alejandro Sánchez Sánchez",
+   0.06308539045028516
+  ],
+  [
+   "Thiago Motta",
+   0.06124840486743058
+  ],
+  [
+   "Marcelo Vieira da Silva Júnior",
+   0.05742086559900282
+  ],
+  [
+   "David Luiz Moreira Marinho",
+   0.05643637473886051
+  ],
+  [
+   "Kléper Laveran Lima Ferreira",
+   0.05552987379522257
+  ],
+  [
+   "Gerard Piqué Bernabéu",
+   0.05495818476889676
+  ],
+  [
+   "Lucas Rodrigues Moura da Silva",
+   0.0529434752108688
+  ],
+  [
+   "Maxwell Scherrer Cabelino Andrade",
+   0.05284404288057967
+  ],
+  [
+   "Paulo Bruno Exequiel Dybala",
+   0.05216124748208732
+  ]
+ ],
+ "bottom": [
+  [
+   "Lossémy Karaboué",
+   -0.050124212390276014
+  ],
+  [
+   "Rubén Rochina Naixes",
+   -0.04772644885432077
+  ],
+  [
+   "Fabien Camus",
+   -0.04551045176375647
+  ],
+  [
+   "Paolo Sammarco",
+   -0.04434049367995815
+  ],
+  [
+   "Benjamin Nivet",
+   -0.04399314279628185
+  ],
+  [
+   "Jordan Ayew",
+   -0.04395868450310132
+  ],
+  [
+   "Corentin Jean",
+   -0.0435628904227143
+  ],
+  [
+   "Leonardo Blanchard",
+   -0.04125857291839002
+  ],
+  [
+   "Mirko Gori",
+   -0.03713038774845975
+  ],
+  [
+   "Leandro Bacuna",
+   -0.036559923622993595
+  ],
+  [
+   "Federico Dionisi",
+   -0.0348288913079316
+  ],
+  [
+   "François Modesto",
+   -0.03281697759962266
+  ],
+  [
+   "Isaac Ajayi Success",
+   -0.032779385847199694
+  ],
+  [
+   "Rubén Salvador Pérez Del Mármol",
+   -0.031977010299566316
+  ],
+  [
+   "Matthieu Saunier",
+   -0.029568360672179668
+  ]
+ ]
+}
