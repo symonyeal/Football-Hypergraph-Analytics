@@ -16,17 +16,17 @@ A player's rating is the change in the team's open-play xG difference per 90 min
 | Highest rated | xG/90 | Lowest rated | xG/90 |
 | --- | --- | --- | --- |
 | Zlatan Ibrahimović | 0.095 | Lossémy Karaboué | -0.050 |
-| Karim Benzema | 0.071 | Rubén Rochina Naixes | -0.048 |
-| Edinson Roberto Cavani Gómez | 0.067 | Fabien Camus | -0.046 |
-| Ángel Fabián Di María Hernández | 0.066 | Paolo Sammarco | -0.044 |
-| Jordi Alba Ramos | 0.064 | Benjamin Nivet | -0.044 |
+| Karim Benzema | 0.071 | Rubén Rochina | -0.048 |
+| Edinson Cavani | 0.067 | Fabien Camus | -0.046 |
+| Ángel Di María | 0.066 | Paolo Sammarco | -0.044 |
+| Jordi Alba | 0.064 | Benjamin Nivet | -0.044 |
 | Ivan Rakitić | 0.063 | Jordan Ayew | -0.044 |
-| Alexis Alejandro Sánchez Sánchez | 0.063 | Corentin Jean | -0.044 |
+| Alexis Sánchez | 0.063 | Corentin Jean | -0.044 |
 | Thiago Motta | 0.061 | Leonardo Blanchard | -0.041 |
-| Marcelo Vieira da Silva Júnior | 0.057 | Mirko Gori | -0.037 |
-| David Luiz Moreira Marinho | 0.056 | Leandro Bacuna | -0.037 |
-| Kléper Laveran Lima Ferreira | 0.056 | Federico Dionisi | -0.035 |
-| Gerard Piqué Bernabéu | 0.055 | François Modesto | -0.033 |
-| Lucas Rodrigues Moura da Silva | 0.053 | Isaac Ajayi Success | -0.033 |
-| Maxwell Scherrer Cabelino Andrade | 0.053 | Rubén Salvador Pérez Del Mármol | -0.032 |
-| Paulo Bruno Exequiel Dybala | 0.052 | Matthieu Saunier | -0.030 |
+| Marcelo | 0.057 | Mirko Gori | -0.037 |
+| David Luiz | 0.056 | Leandro Bacuna | -0.037 |
+| Pepe | 0.056 | Federico Dionisi | -0.035 |
+| Gerard Piqué | 0.055 | François Modesto | -0.033 |
+| Lucas Moura | 0.053 | Isaac Success | -0.033 |
+| Maxwell | 0.053 | Rubén Pérez | -0.032 |
+| Paulo Dybala | 0.052 | Matthieu Saunier | -0.030 |
