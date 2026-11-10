@@ -38,7 +38,7 @@ def get(path):
                 return json.loads(r.read())
         except Exception:
             if t == 7:
-                raise
+                raise RuntimeError(f"could not read {RAW}/{path}")
             time.sleep(min(60, 2 ** t))
 
 
@@ -179,7 +179,18 @@ def inbox(l):
     return l[0] >= 102 and 18 <= l[1] <= 62
 
 
+SKIPPED = []   # (path, reason) of source files that could not be parsed after every retry
+
+
 def passes(m):
+    try:
+        return _passes(m)
+    except RuntimeError as x:
+        SKIPPED.append([m["match_id"], str(x)])
+        return []
+
+
+def _passes(m):
     """Feature rows of one match: open-play passes in the opponent half, outside the box, >= 6 visible defenders."""
     ev = get(f"events/{m['match_id']}.json")
     ff = {f["event_uuid"]: f for f in get(f"three-sixty/{m['match_id']}.json")}
@@ -256,6 +267,7 @@ def stage_defence(limit=None):
     allr = tr + te
     qh = np.quantile([r["hole"] for r in allr], [0, .25, .5, .75, 1])
     g = sets["gaps"]
+    out["skipped_matches"] = SKIPPED
     out["by_competition"] = []
     for key in sorted({r["comp"] for r in data["train"] + data["test"] + data["other"]}):
         R = [r for r in data["train"] + data["test"] + data["other"] if r["comp"] == key]
