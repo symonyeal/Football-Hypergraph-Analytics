@@ -375,7 +375,7 @@ def stage_lineup(limit=None):
             h, a = m["home_team"]["home_team_id"], m["away_team"]["away_team_id"]
             for t in lu:
                 for p in t["lineup"]:
-                    names[p["player_id"]] = p["player_name"]
+                    names[p["player_id"]] = p.get("player_nickname") or p["player_name"]
                     team_of[p["player_id"]] = t["team_id"]
             T = lambda e: sb.u(e["minute"] + e["second"] / 60, e["period"])
             spans = []
@@ -388,7 +388,7 @@ def stage_lineup(limit=None):
                 st["diff"] = max(-2, min(2, sum(1 if g == h else -1 for t, g in goals if t < st["t0"])))
                 S[W].append((m["match_id"], h, a, st))
     out = {"windows": {}}
-    beta = {}
+    beta, mins_w = {}, {}
     for W, R in S.items():
         mins, off = Counter(), defaultdict(lambda: [0.0, set()])
         played = defaultdict(set)
@@ -435,10 +435,13 @@ def stage_lineup(limit=None):
         lam = min(cv, key=cv.get)
         f = Ridge(alpha=lam).fit(X, y, sample_weight=wt)
         beta[W] = {v: float(f.coef_[ix[v]]) for v in ok}
+        mins_w[W] = {v: mins[v] for v in ok}
         out["windows"][W] = {"stints": len(R), "players": n, "eligible": len(ok), "lambda": lam, "cv_mse": cv,
                              "home_intercept": float(f.intercept_), "manpower": float(f.coef_[n]), "score_diff": float(f.coef_[n + 1])}
     both = sorted(set(beta["train"]) & set(beta["test"]))
     out["eligible_both"] = len(both)
+    out["ratings"] = {v: [beta["train"][v], beta["test"][v], mins_w["train"][v], mins_w["test"][v]] for v in both}
+    out["names"] = names
     if len(both) >= 10:
         out["H6"] = rho([beta["train"][v] for v in both], [beta["test"][v] for v in both])
         if out["H6"][1][0] > 0:
