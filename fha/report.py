@@ -128,7 +128,40 @@ def defence():
     (R / "defence.md").write_text("\n".join(L) + "\n", encoding="utf-8")
 
 
+SEQ_GLOSSARY = """| Metric | Meaning |
+| --- | --- |
+| `p_shot` | Probability that a possession still alive after three on-ball actions produces an open-play shot |
+| Log loss | Average penalty for the predicted probabilities; lower is better. Differences between models are the information a feature block adds |
+| `who_gain` | Log-loss improvement from adding the set of players involved (model 5) to everything about what happened and where (model 4). Above the threshold: who is on the ball matters beyond the actions themselves |
+"""
+
+MODEL_NAMES = {0: "context", 1: "context + players + pass pairs", 2: "context + VAEP action features", 3: "1 + pass motif",
+               4: "2 ∪ 3 (full rival)", 5: "4 + player set"}
+
+
+def sequence():
+    r = json.loads((R / "sequence.json").read_text(encoding="utf-8"))
+    L = ["# Does who is involved predict danger beyond what happens?", "", SRC,
+         f"Possessions alive after three on-ball actions: {r['n']['train']} training, {r['n']['test']} test; "
+         f"shot rate {f(r['rate']['train'], 3)} and {f(r['rate']['test'], 3)}.", "", "## What the metrics mean", "", SEQ_GLOSSARY,
+         "| Model | Penalty C | Test log loss | Brier |", "| --- | --- | --- | --- |"]
+    L += [f"| {k}: {MODEL_NAMES[int(k)]} | {r['C'][k]} | {f(r['logloss'][k], 4)} | {f(r['brier'][k], 4)} |" for k in r["logloss"]]
+    L += ["", "| Added information | Change in log loss | Interval |", "| --- | --- | --- |"]
+    for k, lab in (("d10", "players and pass pairs over context"), ("d20", "VAEP action features over context"),
+                   ("d31", "pass motif over players"), ("d42", "players, pairs, motif over VAEP"), ("d43", "VAEP over players and motif"),
+                   ("d54", "player set over the full rival (who_gain)")):
+        d, ci = r[k]
+        L.append(f"| {lab} | {f(d, 5)} | {f(ci[0], 5)} to {f(ci[1], 5)} |")
+    h = r["H4"]
+    L += ["", f"**H4.** Registered threshold: improvement of at least {f(h['threshold'], 5)}. "
+          + ("Holds: the set of players carries information beyond the actions." if h["holds"] else
+             "Does not hold: no demonstrated value of player-set information."), "",
+          "## Calibration of the full rival (model 4), deciles", "", "| Mean predicted | Observed |", "| --- | --- |"]
+    L += [f"| {f(a, 3)} | {f(b, 3)} |" for a, b in r["calibration"]["4"]]
+    (R / "sequence.md").write_text("\n".join(L) + "\n", encoding="utf-8")
+
+
 if __name__ == "__main__":
-    for s, g in (("attack", attack), ("defence", defence)):
+    for s, g in (("attack", attack), ("defence", defence), ("sequence", sequence)):
         if (R / f"{s}.json").exists():
             g()

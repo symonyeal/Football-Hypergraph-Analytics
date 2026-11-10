@@ -6,6 +6,10 @@ on:
       stage:
         description: "attack, defence or sequence"
         required: true
+      limit:
+        description: "smoke test: matches per competition end (empty = full run)"
+        required: false
+        default: ""
 permissions:
   contents: write
 jobs:
@@ -19,9 +23,13 @@ jobs:
           python-version: "3.12"
       - run: cargo build --release
       - run: pip install -r requirements.txt
-      - run: python -m fha.run ${{ inputs.stage }}
-      - run: python -m fha.report
-      - run: |
+      - if: inputs.stage == 'sequence'
+        run: pip install "socceraction==1.5.3"
+      - run: python -m fha.run ${{ inputs.stage }} ${{ inputs.limit && format('--limit {0}', inputs.limit) || '' }}
+      - if: inputs.limit == ''
+        run: python -m fha.report
+      - if: inputs.limit == ''
+        run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add results

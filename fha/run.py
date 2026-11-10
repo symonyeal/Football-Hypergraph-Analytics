@@ -1,7 +1,8 @@
 """Registered tests H1-H3 and H5 (docs/HYPOTHESES.md) on StatsBomb open data, streamed at a pinned commit.
 
-Usage: python -m fha.run attack|defence [--limit N]   (writes results/<stage>.json; --limit is a smoke test)
-Raw data is never written to disk (StatsBomb Public Data User Agreement 1.2.1).
+Usage: python -m fha.run attack|defence|sequence [--limit N]   (writes results/<stage>.json; --limit is a smoke test)
+Raw data is never kept: it is held in memory, except one event file at a time in a temporary runner directory for
+socceraction (StatsBomb Public Data User Agreement 1.2.1).
 
 Legend: W window ('train' weeks 1-19 or 'test' 20-38), F family of attacking groups, w xG weights.
 """
@@ -252,12 +253,115 @@ def stage_defence(limit=None):
     return out
 
 
+# ---------------------------------------------------------------- sequence (H4)
+
+MODELS = {0: [0], 1: [0, 1], 2: [0, "v"], 3: [0, 1, 3], 4: [0, 1, "v", 3], 5: [0, 1, "v", 3, 5]}
+
+
+def vaep_rows(ev, mid, h, root):
+    """VAEP features (socceraction, 3 previous actions) keyed by StatsBomb event id. The event file lives only in a
+    temporary runner directory and is deleted after conversion."""
+    import pandas as pd
+    import socceraction.spadl as spadl
+    import socceraction.vaep.features as fs
+    from socceraction.data.statsbomb import StatsBombLoader
+    p = root / "events" / f"{mid}.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(ev), encoding="utf-8")
+    try:
+        df = StatsBombLoader(getter="local", root=str(root)).events(mid)
+    finally:
+        p.unlink()
+    A = spadl.add_names(spadl.statsbomb.convert_to_actions(df, home_team_id=h))
+    gs = fs.play_left_to_right(fs.gamestates(A, 3), h)
+    XF = [fs.actiontype_onehot, fs.result_onehot, fs.bodypart_onehot, fs.time, fs.startlocation, fs.endlocation,
+          fs.startpolar, fs.endpolar, fs.movement, fs.team, fs.time_delta, fs.space_delta, fs.goalscore]
+    X = pd.concat([f(gs) for f in XF], axis=1).astype(float)
+    X.index = A["original_event_id"].astype(str)
+    return {k: {f"v:{c}": float(x) for c, x in row.items() if x} for k, row in X.iterrows()}
+
+
+def stage_sequence(limit=None):
+    import tempfile
+    from sklearn.feature_extraction import DictVectorizer
+    from sklearn.model_selection import GroupKFold
+    from fha import seq
+    root = Path(tempfile.mkdtemp())
+    rows = []
+    for c, s in LEAGUES:
+        ms = sorted(get(f"matches/{c}/{s}.json"), key=lambda m: m["match_date"])
+        for m in ms[:limit] + ms[-limit:] if limit else ms:
+            W = "train" if m["match_week"] <= 19 else "test"
+            ev = get(f"events/{m['match_id']}.json")
+            h = m["home_team"]["home_team_id"]
+            V = vaep_rows(ev, m["match_id"], h, root)
+            goals = [(e["index"], e["team"]["id"]) for e in ev if (e["type"]["name"] == "Shot" and e["shot"]["outcome"]["name"] == "Goal")
+                     or e["type"]["name"] == "Own Goal For"]
+            for poss in sb.possessions(ev):
+                k = sb.cutoff(poss)
+                if not k["alive"]:
+                    continue
+                first, t = k["first"], k["first"][0]["team"]["id"]
+                i0 = min(e["index"] for e in poss)
+                d = sum(1 if g == t else -1 for i, g in goals if i < i0)
+                ctx = {"pattern": poss[0]["play_pattern"]["name"], "diff": d, "minute": first[0]["minute"], "home": int(t == h)}
+                f = seq.features(first, ctx, k["P"])
+                f["v"] = next((V[e["id"]] for e in reversed(first) if e["id"] in V), {})
+                rows.append((m["match_id"], W, f, k["y"]))
+    tr = [r for r in rows if r[1] == "train"]
+    te = [r for r in rows if r[1] == "test"]
+    sets = Counter(next(iter(r[2][5])) for r in tr)
+    keep = {k for k, n in sets.items() if n >= 5}
+
+    def X(R, blocks):
+        out = []
+        for _, _, f, _ in R:
+            d = {}
+            for b in blocks:
+                d.update({k: v for k, v in f[b].items() if b != 5 or k in keep})
+            out.append(d)
+        return out
+
+    ytr, yte = np.array([r[3] for r in tr]), np.array([r[3] for r in te])
+    gtr, gte = np.array([r[0] for r in tr]), np.array([r[0] for r in te])
+    L, res = {}, {"n": {"train": len(tr), "test": len(te)}, "rate": {"train": float(ytr.mean()), "test": float(yte.mean())},
+                  "sets_kept": len(keep), "C": {}, "logloss": {}, "brier": {}, "calibration": {}}
+    for k, blocks in MODELS.items():
+        dv = DictVectorizer()
+        Xtr, Xte = dv.fit_transform(X(tr, blocks)), dv.transform(X(te, blocks))
+        sc = StandardScaler(with_mean=False).fit(Xtr)
+        Xtr, Xte = sc.transform(Xtr), sc.transform(Xte)
+        cv = {}
+        for C in (0.001, 0.01, 0.1, 1.0):
+            ls = []
+            for a, b in GroupKFold(5).split(Xtr, ytr, gtr):
+                p = LogisticRegression(C=C, max_iter=2000).fit(Xtr[a], ytr[a]).predict_proba(Xtr[b])[:, 1]
+                ls.append(log_loss(ytr[b], p, labels=[0, 1]))
+            cv[C] = float(np.mean(ls))
+        C = min(cv, key=cv.get)
+        p = np.clip(LogisticRegression(C=C, max_iter=2000).fit(Xtr, ytr).predict_proba(Xte)[:, 1], 1e-12, 1 - 1e-12)
+        L[k] = -(yte * np.log(p) + (1 - yte) * np.log(1 - p))
+        res["C"][k], res["logloss"][k], res["brier"][k] = C, float(L[k].mean()), float(((p - yte) ** 2).mean())
+        q = np.quantile(p, np.linspace(0, 1, 11))
+        res["calibration"][k] = [[float(p[(p >= q[i]) & (p <= q[i + 1])].mean()), float(yte[(p >= q[i]) & (p <= q[i + 1])].mean())] for i in range(10)]
+    u = np.unique(gte)
+    idx = {g: np.flatnonzero(gte == g) for g in u}
+    for a, b in ((1, 0), (2, 0), (3, 1), (4, 2), (4, 3), (5, 4)):
+        d = L[a] - L[b]
+        res[f"d{a}{b}"] = [float(d.mean()), boot(lambda i: np.concatenate([d[idx[u[j]]] for j in i]).mean(), len(u))]
+    dl, ci = res["d54"]
+    res["H4"] = {"threshold": 0.005 * res["logloss"][4], "holds": bool(-dl >= 0.005 * res["logloss"][4] and ci[1] < 0)}
+    return res
+
+
 if __name__ == "__main__":
     a = sys.argv[1:]
     limit = int(a[a.index("--limit") + 1]) if "--limit" in a else None
     OUT.mkdir(exist_ok=True)
-    for s in [x for x in a if x in ("attack", "defence")]:
-        r = {"attack": stage_attack, "defence": stage_defence}[s](limit)
+    for s in [x for x in a if x in ("attack", "defence", "sequence")]:
+        r = {"attack": stage_attack, "defence": stage_defence, "sequence": stage_sequence}[s](limit)
         name = f"{s}{'-smoke' if limit else ''}.json"
         (OUT / name).write_text(json.dumps(r, indent=1, default=str, ensure_ascii=False), encoding="utf-8")
         print(s, "written", OUT / name)
+        if limit:
+            print(json.dumps({k: v for k, v in r.items() if k not in ("teams", "names", "coef")}, default=str)[:20000])
