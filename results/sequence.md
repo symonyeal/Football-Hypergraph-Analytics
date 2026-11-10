@@ -16,35 +16,35 @@ Possessions alive after three on-ball actions: 107375 training, 107158 test; sho
 
 | Model | Penalty C | Test log loss | Brier |
 | --- | --- | --- | --- |
-| 0: context | 0.01 | 0.3516 | 0.1012 |
-| 1: context + players + pass pairs | 0.001 | 0.4839 | 0.1266 |
-| 2: context + VAEP action features | 0.1 | 0.3355 | 0.0965 |
-| 3: 1 + pass motif | 0.001 | 0.4859 | 0.1263 |
-| 4: 2 ∪ 3 (full rival) | 0.001 | 0.4673 | 0.1219 |
-| 5: 4 + player set | 0.001 | 0.4827 | 0.1244 |
+| 0: context | 1.0 | 0.3517 | 0.1012 |
+| 1: context + players + pass pairs | 0.01 | 0.3515 | 0.1012 |
+| 2: context + VAEP action features | 1.0 | 0.3357 | 0.0965 |
+| 3: 1 + pass motif | 0.01 | 0.3514 | 0.1011 |
+| 4: 2 ∪ 3 (full rival) | 0.01 | 0.3371 | 0.0971 |
+| 5: 4 + player set | 0.01 | 0.3371 | 0.0971 |
 
 | Added information | Change in log loss | Interval |
 | --- | --- | --- |
-| players and pass pairs over context | 0.13223 | 0.12725 to 0.13749 |
-| VAEP action features over context | -0.01611 | -0.01726 to -0.01491 |
-| pass motif over players | 0.00207 | 0.00165 to 0.00249 |
-| players, pairs, motif over VAEP | 0.13182 | 0.12690 to 0.13698 |
-| VAEP over players and motif | -0.01859 | -0.02008 to -0.01714 |
-| player set over the full rival (who_gain) | 0.01533 | 0.01403 to 0.01663 |
+| players and pass pairs over context | -0.00017 | -0.00050 to 0.00016 |
+| VAEP action features over context | -0.01598 | -0.01711 to -0.01480 |
+| pass motif over players | -0.00014 | -0.00035 to 0.00007 |
+| players, pairs, motif over VAEP | 0.00144 | 0.00103 to 0.00182 |
+| VAEP over players and motif | -0.01423 | -0.01519 to -0.01330 |
+| player set over the full rival (who_gain) | -0.00003 | -0.00004 to -0.00001 |
 
-**H4.** Registered threshold: improvement of at least 0.00234. Does not hold: no demonstrated value of player-set information.
+**H4.** Registered threshold: improvement of at least 0.00169. Does not hold: no demonstrated value of player-set information.
 
 ## Calibration of the full rival (model 4), deciles
 
 | Mean predicted | Observed |
 | --- | --- |
-| 0.002 | 0.076 |
-| 0.006 | 0.085 |
-| 0.012 | 0.094 |
-| 0.020 | 0.096 |
-| 0.033 | 0.104 |
-| 0.053 | 0.109 |
-| 0.082 | 0.114 |
-| 0.129 | 0.134 |
-| 0.221 | 0.165 |
-| 0.542 | 0.196 |
+| 0.036 | 0.043 |
+| 0.056 | 0.066 |
+| 0.069 | 0.072 |
+| 0.082 | 0.076 |
+| 0.096 | 0.087 |
+| 0.111 | 0.103 |
+| 0.129 | 0.113 |
+| 0.151 | 0.128 |
+| 0.182 | 0.169 |
+| 0.271 | 0.317 |
