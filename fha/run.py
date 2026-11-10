@@ -124,6 +124,12 @@ def stage_attack(limit=None):
     out = {"teams": {}, "H1": {}, "H2": {}, "H3": {}, "sensitivity_q0.1": {}}
     for t in teams:
         out["teams"][names[t]] = {"league": league[t], **{W: M[t][W] for W in ("train", "test")}}
+        for W in ("train", "test"):  # aggregate per distinct group: (players, possessions, xG); no event rows
+            agg = defaultdict(lambda: [0, 0.0])
+            for A, x in G[(t, W)]:
+                agg[A][0] += 1
+                agg[A][1] += x
+            out["teams"][names[t]][W]["groups"] = [[sorted(A), c, x] for A, (c, x) in agg.items()]
     # H1: split-half stability
     for k in ("tau", "tau_star", "nu"):
         out["H1"][k] = rho([M[t]["train"][k] for t in teams], [M[t]["test"][k] for t in teams])
@@ -228,6 +234,8 @@ def stage_defence(limit=None):
         L[k] = -(yte * np.log(p) + (1 - yte) * np.log(1 - p))
         coef = dict(zip(cols, f[-1].coef_[0].tolist()))
         L[k + "_coef"] = coef
+        L[k + "_model"] = {"cols": cols, "mean": f[0].mean_.tolist(), "scale": f[0].scale_.tolist(),
+                           "coef": f[-1].coef_[0].tolist(), "intercept": float(f[-1].intercept_[0])}
     u = np.unique(mt)
     idx = {g: np.flatnonzero(mt == g) for g in u}
 
@@ -238,7 +246,8 @@ def stage_defence(limit=None):
     out = {"n": {"train": len(tr), "test": len(te)}, "rate": {"train": float(ytr.mean()), "test": float(yte.mean())},
            "logloss": {k: float(L[k].mean()) for k in sets},
            "H5a_gaps_vs_shape": paired("gaps", "shape"), "H5b_topology_vs_gaps": paired("topology", "gaps"),
-           "shape_vs_base": paired("shape", "base"), "coef": {k: L[k + "_coef"] for k in sets}}
+           "shape_vs_base": paired("shape", "base"), "coef": {k: L[k + "_coef"] for k in sets},
+           "model": {k: L[k + "_model"] for k in sets}}
     allr = tr + te
     for k in ("gap", "hole", "h1"):
         v = np.array([r[k] for r in allr])
