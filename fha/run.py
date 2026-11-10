@@ -1,6 +1,6 @@
 """Registered tests H1-H3 and H5 (docs/HYPOTHESES.md) on StatsBomb open data, streamed at a pinned commit.
 
-Usage: python -m fha.run attack|defence|sequence|lineup [--limit N]   (writes results/<stage>.json; --limit is a smoke test)
+Usage: python -m fha.run attack|defence|sequence|lineup|seasons [--limit N]   (writes results/<stage>.json; --limit is a smoke test)
 Raw data is never kept: it is held in memory, except one event file at a time in a temporary runner directory for
 socceraction (StatsBomb Public Data User Agreement 1.2.1).
 
@@ -125,11 +125,7 @@ def stage_attack(limit=None):
     for t in teams:
         out["teams"][names[t]] = {"league": league[t], **{W: M[t][W] for W in ("train", "test")}}
         for W in ("train", "test"):  # aggregate per distinct group: (players, possessions, xG); no event rows
-            agg = defaultdict(lambda: [0, 0.0])
-            for A, x in G[(t, W)]:
-                agg[A][0] += 1
-                agg[A][1] += x
-            out["teams"][names[t]][W]["groups"] = [[sorted(A), c, x] for A, (c, x) in agg.items()]
+            out["teams"][names[t]][W]["groups"] = attack.agg(G[(t, W)])
     # H1: split-half stability
     for k in ("tau", "tau_star", "nu"):
         out["H1"][k] = rho([M[t]["train"][k] for t in teams], [M[t]["test"][k] for t in teams])
@@ -213,13 +209,21 @@ def passes(m):
 
 
 def stage_defence(limit=None):
-    data = {}
-    for W, comps in (("train", D_TRAIN), ("test", D_TEST)):
-        data[W] = []
-        for c, s in comps:
-            ms = get(f"matches/{c}/{s}.json")
-            for m in ms[:limit] if limit else ms:
-                data[W] += passes(m)
+    """Registered H5 on the training and test tournaments; every other 360 competition is scored descriptively."""
+    from concurrent.futures import ThreadPoolExecutor
+    reg = {f"{c}/{s}": W for W, comps in (("train", D_TRAIN), ("test", D_TEST)) for c, s in comps}
+    data, label = {"train": [], "test": [], "other": []}, {}
+    for c in get("competitions.json"):
+        key = f"{c['competition_id']}/{c['season_id']}"
+        ms = [m for m in get(f"matches/{key}.json") if m.get("match_status_360") == "available"]
+        if not ms:
+            continue
+        label[key] = f"{c['competition_name']} {c['season_name']}"
+        with ThreadPoolExecutor(8) as ex:
+            for rows in ex.map(passes, ms[:limit] if limit else ms):
+                for r in rows:
+                    r["comp"] = key
+                data[reg.get(key, "other")] += rows
     sets = {"base": ["x", "yy", "dist"], "shape": ["x", "yy", "dist", "width", "depth", "area"],
             "gaps": ["x", "yy", "dist", "width", "depth", "area", "gap", "hole"],
             "topology": ["x", "yy", "dist", "width", "depth", "area", "gap", "hole", "h1"]}
@@ -234,6 +238,7 @@ def stage_defence(limit=None):
         L[k] = -(yte * np.log(p) + (1 - yte) * np.log(1 - p))
         coef = dict(zip(cols, f[-1].coef_[0].tolist()))
         L[k + "_coef"] = coef
+        L[k + "_fit"] = f
         L[k + "_model"] = {"cols": cols, "mean": f[0].mean_.tolist(), "scale": f[0].scale_.tolist(),
                            "coef": f[-1].coef_[0].tolist(), "intercept": float(f[-1].intercept_[0])}
     u = np.unique(mt)
@@ -249,6 +254,18 @@ def stage_defence(limit=None):
            "shape_vs_base": paired("shape", "base"), "coef": {k: L[k + "_coef"] for k in sets},
            "model": {k: L[k + "_model"] for k in sets}}
     allr = tr + te
+    qh = np.quantile([r["hole"] for r in allr], [0, .25, .5, .75, 1])
+    g = sets["gaps"]
+    out["by_competition"] = []
+    for key in sorted({r["comp"] for r in data["train"] + data["test"] + data["other"]}):
+        R = [r for r in data["train"] + data["test"] + data["other"] if r["comp"] == key]
+        y = np.array([r["y"] for r in R])
+        p = L["gaps_fit"].predict_proba(np.array([[r[c] for c in g] for r in R]))[:, 1]
+        hv = np.array([r["hole"] for r in R])
+        out["by_competition"].append({"key": key, "label": label[key], "role": reg.get(key, "descriptive"), "passes": len(R),
+                                      "matches": len({r["match"] for r in R}), "entry_rate": float(y.mean()), "predicted": float(p.mean()),
+                                      "gap_median": float(np.median([r["gap"] for r in R])), "hole_median": float(np.median(hv)),
+                                      "entry_by_hole_quartile": [float(y[(hv >= qh[i]) & (hv <= qh[i + 1])].mean()) if ((hv >= qh[i]) & (hv <= qh[i + 1])).any() else None for i in range(4)]})
     for k in ("gap", "hole", "h1"):
         v = np.array([r[k] for r in allr])
         y = np.array([r["y"] for r in allr])
@@ -359,6 +376,60 @@ def stage_sequence(limit=None):
     return res
 
 
+# ---------------------------------------------------------------- every competition-season (descriptive)
+
+MIN_MATCHES, MIN_CHANCES = 5, 15
+
+
+def stage_seasons(limit=None):
+    """Attack measures for every team with at least MIN_MATCHES matches and MIN_CHANCES chances in every
+    competition-season of the open data. Descriptive: no registered test, no train/test split."""
+    from concurrent.futures import ThreadPoolExecutor
+    comps = get("competitions.json")
+    out = {"competitions": [], "teams": [], "names": {}}
+    for c in comps:
+        key = f"{c['competition_id']}/{c['season_id']}"
+        ms = get(f"matches/{key}.json")
+        ms = ms[:limit] if limit else ms
+        played = Counter()
+        tname = {}
+        for m in ms:
+            for side in ("home", "away"):
+                played[m[f"{side}_team"][f"{side}_team_id"]] += 1
+                tname[m[f"{side}_team"][f"{side}_team_id"]] = m[f"{side}_team"][f"{side}_team_name"]
+        out["competitions"].append({"key": key, "competition": c["competition_name"], "season": c["season_name"],
+                                    "gender": c["competition_gender"], "international": c["competition_international"],
+                                    "matches": len(ms), "teams": len(played), "measured": 0,
+                                    "matches_360": sum(1 for m in ms if m.get("match_status_360") == "available")})
+        keep = {t for t, n in played.items() if n >= MIN_MATCHES}
+        if not keep:
+            continue
+        G, U, xg = defaultdict(list), defaultdict(Counter), Counter()
+        with ThreadPoolExecutor(8) as ex:
+            pairs = list(ex.map(lambda m: (get(f"events/{m['match_id']}.json"), get(f"lineups/{m['match_id']}.json")),
+                                [m for m in ms if m["home_team"]["home_team_id"] in keep or m["away_team"]["away_team_id"] in keep]))
+        for ev, lu in pairs:
+            for t in lu:
+                for q in t["lineup"]:
+                    out["names"][q["player_id"]] = q.get("player_nickname") or q["player_name"]
+            for g in sb.attack_groups(ev):
+                if g["team"] in keep:
+                    G[g["team"]].append((g["A"], g["xg"]))
+            for e in ev:
+                if e["team"]["id"] in keep and e["type"]["name"] in sb.ON and e["team"]["id"] == e["possession_team"]["id"]:
+                    U[e["team"]["id"]][e["player"]["id"]] += 1
+                if e["team"]["id"] in keep and sb.openplay(e):
+                    xg[e["team"]["id"]] += e["shot"]["statsbomb_xg"]
+        for t in sorted(keep):
+            if len(G[t]) < MIN_CHANCES:
+                continue
+            M = measures(G[t], U[t])
+            out["teams"].append({"key": key, "team": tname[t], "team_id": t, "matches": played[t], "xg_per_match": xg[t] / played[t],
+                                 "groups": attack.agg(G[t]), **{k: M[k] for k in ("m", "xg", "tau", "tau_star", "nu", "cov", "T_tau", "usage", "solo")}})
+            out["competitions"][-1]["measured"] += 1
+    return out
+
+
 # ---------------------------------------------------------------- lineups (H6, gated)
 
 def stage_lineup(limit=None):
@@ -455,7 +526,7 @@ if __name__ == "__main__":
     a = sys.argv[1:]
     limit = int(a[a.index("--limit") + 1]) if "--limit" in a else None
     OUT.mkdir(exist_ok=True)
-    stages = {"attack": stage_attack, "defence": stage_defence, "sequence": stage_sequence, "lineup": stage_lineup}
+    stages = {"attack": stage_attack, "defence": stage_defence, "sequence": stage_sequence, "lineup": stage_lineup, "seasons": stage_seasons}
     for s in [x for x in a if x in stages]:
         r = stages[s](limit)
         name = f"{s}{'-smoke' if limit else ''}.json"

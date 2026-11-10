@@ -43,3 +43,9 @@ def test_cov_weighted_uses_full_family():
     assert isclose(s, 6 / 7) and set(T) in [{0, 2}, {1, 2}]
     assert isclose(covered((0, 2), F, w), 6 / 7)
     assert covered((), F, w) == 0.0
+
+
+def test_agg_sums_possessions_and_xg_per_distinct_group():
+    from fha.attack import agg
+    G = [(frozenset({3, 1}), 0.2), (frozenset({1, 3}), 0.1), (frozenset({2}), 0.5)]
+    assert sorted(agg(G)) == [[[1, 3], 2, 0.30000000000000004], [[2], 1, 0.5]]

@@ -81,3 +81,13 @@ def cov(F, w, n, b):
         raise RuntimeError(f"cov: HiGHS status {r.status}")
     T = tuple(v for v in range(n) if r.x[v] > 0.5)
     return covered(T, F, w), T
+
+
+def agg(G):
+    """Distinct groups of (group, xG) pairs as [sorted players, possessions, summed xG]: aggregate, no event rows."""
+    a = {}
+    for A, x in G:
+        c = a.setdefault(A, [0, 0.0])
+        c[0] += 1
+        c[1] += x
+    return [[sorted(A), n, x] for A, (n, x) in a.items()]
