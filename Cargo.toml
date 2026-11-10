@@ -1,0 +1,22 @@
+[package]
+name = "fha"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+description = "Minimal transversals of football attacking-group families, by MMCS from the mcs crate"
+license = "MIT"
+repository = "https://github.com/symonyeal/Football-Hypergraph-Analytics"
+publish = false
+
+[[bin]]
+name = "tr"
+path = "src/main.rs"
+
+[dependencies]
+mcs = { git = "https://github.com/symonyeal/Minimal-Metabolic-Interventions", rev = "a807469ac76c4513eb1461c5b0b6e8accb210280" }
+
+[profile.release]
+opt-level = 3
+
+[lints.rust]
+non_snake_case = "allow"
