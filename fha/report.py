@@ -32,7 +32,7 @@ ATTACK_GLOSSARY = """| Metric | What it counts | High value means | Low value me
 | `tau*` | Fractional version of `tau`: the least total weight on players so that every attack carries weight at least 1 | As `tau` | As `tau` | — |
 | `nu` | Most dangerous attacks that share no player at all | Many fully separate routes to a shot; stopping all of them needs at least `nu` players | Attacks overlap in the same people | A count of attacks |
 | `cov(2)` | Largest share of the team's open-play xG in which at least one of two players took part | The attack depends on two players | Danger is spread | Those players' xG; involvement is any of the last three |
-| `x*` share | A player's part of the fractional `tau*` | The player is a bottleneck: many attacks have few alternatives to them | The player's attacks have alternatives | Touches or usage |
+| `x*` share | A player's part of one optimal fractional `tau*` | Read with care: the optimum is usually not unique, so several players tie (docs/POSTHOC.md P1) | — | Touches or usage |
 | `solo` | Share of xG from attacks where one player was the only one involved | Individual creation (dribble-and-shoot, loose-ball finishes) | Combination play | — |
 """
 
@@ -75,14 +75,15 @@ def attack():
         L += [f"| {t} | {p} | {a} | {s} | {f(d)} |" for t, p, a, s, d in sorted(h["teams"], key=lambda x: -x[4])]
         L.append("")
     L += ["## Teams", "", "Training half; test-half value in brackets. `cov(2)` names the two players.", "",
-          "| Team | League | Attacks | `tau` | `nu` | `cov(2)` | Two players | Bottleneck (`x*` share) | Solo xG |",
+          "| Team | League | Attacks | `tau` | `nu` | `cov(2)` | Two players | Top `x*` player (share; players tied, see docs/POSTHOC.md P1) | Solo xG |",
           "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
     for t, v in sorted(r["teams"].items(), key=lambda kv: (kv[1]["league"], kv[0])):
         a, b = v["train"], v["test"]
         vs = a["v_star"]
         share = a["x_star"][str(vs)] / a["tau_star"]
+        tie = sum(1 for x in a["x_star"].values() if abs(x - a["x_star"][str(vs)]) < 1e-9)
         L.append(f"| {t} | {v['league']} | {a['m']} | {a['tau']} ({b['tau']}) | {a['nu']} ({b['nu']}) | "
-                 f"{f(a['cov']['2'][0])} ({f(b['cov']['2'][0])}) | {nm(a['cov']['2'][1])} | {N[str(vs)]} ({f(share)}) | {f(a['solo'])} |")
+                 f"{f(a['cov']['2'][0])} ({f(b['cov']['2'][0])}) | {nm(a['cov']['2'][1])} | {N[str(vs)]} ({f(share)}; {tie}) | {f(a['solo'])} |")
     L += ["", "## League medians (training half)", "", "| League | `tau` | `nu` | `cov(2)` |", "| --- | --- | --- | --- |"]
     for lg in sorted({v["league"] for v in r["teams"].values()}):
         T = [v["train"] for v in r["teams"].values() if v["league"] == lg]
