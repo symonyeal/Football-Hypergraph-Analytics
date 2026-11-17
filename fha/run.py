@@ -16,7 +16,7 @@ import time
 import urllib.request
 import zipfile
 from collections import Counter, defaultdict
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -63,6 +63,13 @@ def rho(a, b):
 
 # ---------------------------------------------------------------- attack (H1-H3)
 
+def fetched(ms, k=16):
+    """(match, events, lineups) in match order, fetched k matches at a time in parallel (bounded memory)."""
+    with ThreadPoolExecutor(k) as ex:
+        for i in range(0, len(ms), k):
+            yield from ex.map(lambda m: (m, get(f"events/{m['match_id']}.json"), get(f"lineups/{m['match_id']}.json")), ms[i:i + k])
+
+
 def collect(limit):
     """Per team and window: attacking groups, usage, names; per match: lineups and open-play xG. X holds what the
     review's stages add: each chance with its match and the members' roles, completed passes, and match results."""
@@ -75,10 +82,8 @@ def collect(limit):
     games = []                       # (team, opp, W, xg, started set, appeared set)
     for c, s in LEAGUES:
         ms = sorted(get(f"matches/{c}/{s}.json"), key=lambda m: m["match_date"])
-        for m in ms[:limit] + ms[-limit:] if limit else ms:
+        for m, ev, lu in fetched(ms[:limit] + ms[-limit:] if limit else ms):
             W = "train" if m["match_week"] <= 19 else "test"
-            ev = get(f"events/{m['match_id']}.json")
-            lu = get(f"lineups/{m['match_id']}.json")
             h, a = m["home_team"]["home_team_id"], m["away_team"]["away_team_id"]
             names[h], names[a] = m["home_team"]["home_team_name"], m["away_team"]["away_team_name"]
             league[h] = league[a] = m["competition"]["competition_name"]
@@ -238,7 +243,6 @@ def _passes(m):
 
 def stage_defence(limit=None):
     """Registered H5 on the training and test tournaments; every other 360 competition is scored descriptively."""
-    from concurrent.futures import ThreadPoolExecutor
     reg = {f"{c}/{s}": W for W, comps in (("train", D_TRAIN), ("test", D_TEST)) for c, s in comps}
     data, label = {"train": [], "test": [], "other": []}, {}
     for c in get("competitions.json"):
@@ -413,7 +417,6 @@ MIN_MATCHES, MIN_CHANCES = 5, 15
 def stage_seasons(limit=None):
     """Attack measures for every team with at least MIN_MATCHES matches and MIN_CHANCES chances in every
     competition-season of the open data. Descriptive: no registered test, no train/test split."""
-    from concurrent.futures import ThreadPoolExecutor
     comps = get("competitions.json")
     out = {"competitions": [], "teams": [], "names": {}}
     for c in comps:
@@ -472,7 +475,6 @@ WY_COMP = {"England": ("Premier League", "2017/2018", False), "Spain": ("La Liga
 def xg_model(limit=None):
     """Logistic xG on (distance, angle, header) fitted to StatsBomb 2015/16 Premier League and La Liga open-play
     shots, for Wyscout shots, which carry no xG. Returns the fitted model and its fit summary."""
-    from concurrent.futures import ThreadPoolExecutor
     X, y = [], []
     for c, s in ((2, 27), (11, 27)):
         ms = get(f"matches/{c}/{s}.json")
@@ -543,7 +545,7 @@ def stage_wyscout(limit=None):
 
 # ---------------------------------------------------------------- structure (review phase 2, exploratory)
 
-NB, NR, RM = 100, 40, 100   # match resamples, draws per null model, chances for the rarefied tau
+NB, NR, RM = 50, 20, 100    # match resamples (20 for the rarefied tau, the costliest), draws per null model, chances
 FIRST = {"D1": lambda G: mu.hill(mu.phi(G).values(), 1), "D2": lambda G: mu.hill(mu.phi(G).values(), 2),
          "top_phi": lambda G: max(mu.phi(G).values())}
 STRUCT = {"c2": lambda G: mu.cb(G, 2)[0], "c3": lambda G: mu.cb(G, 3)[0], "tau_0.9": lambda G: mu.tau_a(G, 0.9),
@@ -571,7 +573,7 @@ def window(job):
     if level == "player" and len(G) >= RM:
         F["tau_rare"] = lambda H: rare(H, g) if len(H) >= RM else float("nan")
     out = {"m": len(G), "xg": sum(x for _, x in G), "matches": len(Gm)}
-    out.update({k: [f(G), mu.boot(Gm, f, NB, g)] for k, f in F.items()})
+    out.update({k: [f(G), mu.boot(Gm, f, 20 if k == "tau_rare" else NB, g)] for k, f in F.items()})
     nulls = {"N0": mu.redeal, "N2": mu.pairwise}
     if level == "player":
         R = [r for *_, r in rows]

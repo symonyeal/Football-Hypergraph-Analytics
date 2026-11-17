@@ -61,7 +61,7 @@ $\mu$, reported with a within-team standard error from resampling matches (`boot
 | $o(S)$ | $1 - c(S)/\sum_{v\in S} d_v$, for $S$ the two most involved players | Direct |
 | $\tau$ rarefied | Mean $\tau$ over subsamples of 100 chances | `rarefy` |
 
-Null models, each drawn 40 times per window; the excess is observed minus null mean, $z$ its standardised form.
+Null models, each drawn 20 times per window (matches resampled 50 times, 20 for rarefied $\tau$); the excess is observed minus null mean, $z$ its standardised form.
 
 | Null | Preserves | Construction |
 | --- | --- | --- |
