@@ -209,6 +209,13 @@ print(f"  gain of ball position {h(D['rate']['test']) - ll['base']:.4f}; shape {
 ql = Q["logloss"]
 print(f"sequence: base rate {h(Q['rate']['test']):.4f}; " + "; ".join(f"model {k} {v:.4f}" for k, v in ql.items()))
 
+print("\n== D11 Wyscout rebuild against StatsBomb, 2018 World Cup, exposure-free measures (review 4.5)")
+for k_, f_ in (("c(2)", lambda G: mu.cb(ch(G), 2)[0]), ("D1 of phi", lambda G: hill(phi(G).values(), 1))):
+    x_, y_ = np.array([f_(a[k]["groups"]) for k in K]), np.array([f_(b[k]["groups"]) for k in K])
+    mt = [a[k]["matches"] for k in K]
+    print(f"{k_:10s} rho(SB, WY)={rho(x_, y_):.2f}  mean WY - SB {np.mean(y_ - x_):+.3f} (range {np.min(y_ - x_):+.3f} to {np.max(y_ - x_):+.3f})  "
+          f"rho(SB, matches)={rho(x_, mt):.2f}  rho(WY, matches)={rho(y_, mt):.2f}")
+
 if (R / "structure.json").exists():
     X = load("structure")
     print("\n== D10 structure stage (exploratory; python -m fha.run structure): R1 reliability between halves, ICC(2,1) and Spearman")

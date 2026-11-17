@@ -97,6 +97,7 @@ results are committed.
 | `fha/run.py`, `fha/report.py`, `fha/site.py` | Registered tests, results pages, site data |
 | `src/main.rs` | `tr`: minimal transversals by MMCS (`mcs` crate) |
 | `docs/MODEL.md` | Notation, measures and checks |
+| `docs/BACKGROUND.md` | Prior work: what it measures, the baseline it supplies, how far each source was read |
 | `docs/REVIEW.md`, `fha/audit.py` | Design review and improvement plan; the audit of the committed results it rests on |
 
 ```text
