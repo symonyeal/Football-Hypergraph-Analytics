@@ -9,12 +9,29 @@ and Ligue 1; four Women's Super League seasons and other women's leagues; World 
 2023; Barcelona's La Liga matches 2004/05 to 2020/21; 360 freeze frames for eleven competitions) and the Wyscout public
 data set (complete 2017/18 Premier League, La Liga, Bundesliga, Serie A and Ligue 1, the 2018 World Cup and Euro 2016).
 
-**Current answer.** Reproducible weakly; not distinguishable from involvement counts; the link to outcomes is
-untested. The first round of tests ([registered hypotheses](docs/HYPOTHESES.md), [post hoc notes](docs/POSTHOC.md))
-was reviewed on 16 November 2026 ([design review](docs/REVIEW.md); `python -m fha.audit` reproduces its numbers). The
-review found that the first round's measures rise with the number of chances observed and are largely reproduced by
-how often each player is involved. Its revised design is being carried out: new measures, null models, and a
-confirmation run on the Wyscout 2017/18 leagues, which no split-half or model test has yet touched.
+**Answer.** Confirmed on the 98 teams of the Wyscout 2017/18 leagues, under a protocol frozen and tagged before
+that data was opened ([protocol](docs/PROTOCOL.md), [results](results/confirm.md)):
+
+- **Reproducible, weakly.** How concentrated a team's chance creation is repeats between half-seasons: reliability
+  0.38 for the effective number of creators, 0.33 for the share two players touch, 0.29 for the players needed to
+  touch 90% of the danger. All three intervals lie above zero.
+- **Beyond involvement and the pass network, but by little.** Chances are more concentrated than a model that keeps
+  only how often each pair of players shares a chance: by 1.7 points of xG share (interval 1.0 to 2.5), under the
+  2 points the protocol set as the smallest effect of interest. Team by team, the part beyond each player's
+  involvement count does not repeat between halves.
+- **Not related to results.** Adding these measures to a team's first-half xG does not improve the prediction of its
+  second-half xG or points (equivalent to no improvement within the protocol's margin).
+
+In practice, ranking players by how many chances they are involved in picks the key players as well as the exact
+set-cover optimum; ranking by passes made and received does much worse. Whether missing key players costs xG could
+not be resolved with this data. The StatsBomb 2015/16 leagues used to build the tests gave the same answers, with a
+larger excess over the pairwise model (2.5 points).
+
+How the project got here: a first round of tests ([registered hypotheses](docs/HYPOTHESES.md), [post hoc
+notes](docs/POSTHOC.md)) was reviewed on 16 November 2026 ([design review](docs/REVIEW.md); `python -m fha.audit`
+reproduces its numbers). The review found that the first round's measures rose with the number of chances observed
+and were largely reproduced by involvement counts, and set out the measures, null models and protocol used for the
+answer above. One deviation from the protocol is recorded (post hoc note P6).
 
 ## What a chance is
 
