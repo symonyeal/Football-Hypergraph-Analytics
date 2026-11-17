@@ -1,0 +1,56 @@
+name: sharded
+# Runs the structure or confirm stage as 16 parallel jobs (plus the explore part for confirm), then merges the parts
+# and commits results/<stage>.json. Streams StatsBomb open data at the pinned commit; raw data is never stored.
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: "structure or confirm"
+        required: true
+permissions:
+  contents: write
+jobs:
+  part:
+    strategy:
+      fail-fast: true
+      matrix:
+        shard: ["0/16", "1/16", "2/16", "3/16", "4/16", "5/16", "6/16", "7/16", "8/16", "9/16", "10/16", "11/16", "12/16", "13/16", "14/16", "15/16", "explore"]
+        exclude:
+          - shard: ${{ inputs.stage == 'structure' && 'explore' || 'none' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - run: python -m fha.run ${{ inputs.stage }}
+        env:
+          FHA_SHARD: ${{ matrix.shard }}
+          OMP_NUM_THREADS: "1"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: part-${{ strategy.job-index }}
+          path: results/${{ inputs.stage }}-part-*.json
+  merge:
+    needs: part
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          path: results
+          merge-multiple: true
+      - run: python -m fha.run merge ${{ inputs.stage }}
+      - run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add results/${{ inputs.stage }}.json
+          git commit -m "results: ${{ inputs.stage }} (16 parts) from hudl/open-data 4b73468" || echo "no change"
+          git pull --rebase
+          git push

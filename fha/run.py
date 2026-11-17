@@ -1,6 +1,6 @@
 """Registered tests H1-H3 and H5 (docs/HYPOTHESES.md) on StatsBomb open data, streamed at a pinned commit.
 
-Usage: python -m fha.run attack|defence|sequence|lineup|seasons|wyscout|structure|explore|confirm [--limit N]   (writes results/<stage>.json; --limit is a smoke test)
+Usage: python -m fha.run attack|defence|sequence|lineup|seasons|wyscout|structure|explore|confirm [--limit N]; python -m fha.run merge structure|confirm   (writes results/<stage>.json; --limit is a smoke test)
 Raw data is never kept: it is held in memory, except one event file at a time in a temporary runner directory for
 socceraction (StatsBomb Public Data User Agreement 1.2.1).
 
@@ -11,10 +11,12 @@ import io
 import json
 import os
 import platform
+import subprocess
 import sys
 import time
 import urllib.request
 import zipfile
+import zlib
 from collections import Counter, defaultdict
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from pathlib import Path
@@ -70,7 +72,7 @@ def fetched(ms, k=16):
             yield from ex.map(lambda m: (m, get(f"events/{m['match_id']}.json"), get(f"lineups/{m['match_id']}.json")), ms[i:i + k])
 
 
-def collect(limit):
+def collect(limit, leagues=LEAGUES):
     """Per team and window: attacking groups, usage, names; per match: lineups and open-play xG. X holds what the
     review's stages add: each chance with its match and the members' roles, completed passes, and match results."""
     G = defaultdict(list)            # (team, W) -> [(A, xg)]
@@ -80,7 +82,7 @@ def collect(limit):
     U = defaultdict(Counter)         # (team, W) -> player -> on-ball actions
     names, league = {}, {}
     games = []                       # (team, opp, W, xg, started set, appeared set)
-    for c, s in LEAGUES:
+    for c, s in leagues:
         ms = sorted(get(f"matches/{c}/{s}.json"), key=lambda m: m["match_date"])
         for m, ev, lu in fetched(ms[:limit] + ms[-limit:] if limit else ms):
             W = "train" if m["match_week"] <= 19 else "test"
@@ -582,58 +584,90 @@ def window(job):
     return out
 
 
+def shard():
+    """FHA_SHARD = 'i/n': this job computes the i-th of n parts; None runs everything in one process."""
+    v = os.environ.get("FHA_SHARD")
+    return tuple(map(int, v.split("/"))) if v and "/" in v else None
+
+
 def stage_structure(limit=None):
     """Exploration cohort (2015/16 leagues, review 4.5): structure() on StatsBomb chances. Exploratory; this cohort
-    is spent for confirmation."""
-    _, _, names, league, _, X = collect(limit)
-    return structure(X["chances"], names, league, sorted(set(sb.ROLE.values())), "exploratory (docs/REVIEW.md 4.5)")
+    is spent for confirmation. Sharded (FHA_SHARD = i/n, n a multiple of 4): part i fetches league i mod 4 only and
+    takes every (n/4)-th of its teams."""
+    sh = shard()
+    lg = [LEAGUES[sh[0] % 4]] if sh else LEAGUES
+    _, _, names, league, _, X = collect(limit, lg)
+    pick = (lambda T: T[sh[0] // 4::sh[1] // 4]) if sh else None
+    return structure(X["chances"], names, league, sorted(set(sb.ROLE.values())), "exploratory (docs/REVIEW.md 4.5)", pick)
 
 
-def structure(C, names, league, roles, status):
+def structure(C, names, league, roles, status, pick=None):
     """Functionals of the chance measure for the two half-seasons and the full season, at player and role level,
-    with standard errors and null distributions; reliability between halves (R1) and pooled excess over each null
-    over full seasons (R2). C: (team, W) -> [(match, A, xG, {player: role})]."""
-    teams = sorted({t for t, W in C if (t, "train") in C and (t, "test") in C})
+    with standard errors and null distributions, per team; with pick None also the summaries (summary()).
+    C: (team, W) -> [(match, A, xG, {player: role})]; pick selects this shard's teams from the sorted list.
+    Each window's seed depends only on (team, window, level), so sharding leaves every value unchanged."""
+    teams = sorted({t for t, W in C if (t, "train") in C and (t, "test") in C}, key=str)
+    teams = pick(teams) if pick else teams
     rows = {(t, W): C[(t, W)] for t in teams for W in ("train", "test")}
     rows.update({(t, "season"): C[(t, "train")] + C[(t, "test")] for t in teams})
     jobs = [(t, W, lv) for (t, W) in rows for lv in ("player", "role")]
-    with ProcessPoolExecutor(os.cpu_count()) as ex:
-        res = list(ex.map(window, [(lv, rows[(t, W)], SEED + k) for k, (t, W, lv) in enumerate(jobs)], chunksize=1))
+    seed = lambda t, W, lv: SEED + zlib.crc32(f"{t}|{W}|{lv}".encode())
+    with ProcessPoolExecutor(int(os.environ.get("FHA_WORKERS", os.cpu_count()))) as ex:
+        res = list(ex.map(window, [(lv, rows[(t, W)], seed(t, W, lv)) for t, W, lv in jobs], chunksize=1))
     S = {(t, W, lv): r for (t, W, lv), r in zip(jobs, res)}
     out = {"settings": {"match_resamples": NB, "null_draws": NR, "rarefied_chances": RM, "seed": SEED,
                         "roles": roles, "status": status},
            "teams": {names[t]: {"league": league[t], **{W: {lv: S[(t, W, lv)] for lv in ("player", "role")} for W in ("train", "test", "season")},
                                 "groups_role": {W: attack.agg([(frozenset(r.values()), x) for _, _, x, r in rows[(t, W)]]) for W in ("train", "test")}}
                      for t in teams},
-           "R1": {}, "R2": {}}
+           "names": {str(k): v for k, v in names.items()}}
+    return out if pick else {**out, **summary(out["teams"])}
+
+
+def summary(T):
+    """R1 reliability between halves and R2 pooled excess over each null (full seasons), from per-team results T."""
+    teams = sorted(T)
+    S = lambda t, W, lv: T[t][W][lv]
+    out = {"R1": {}, "R2": {}}
     for lv in ("player", "role"):
-        ks = [k for k in S[(teams[0], "train", lv)] if isinstance(S[(teams[0], "train", lv)][k], list)]
+        ks = [k for k in S(teams[0], "train", lv) if isinstance(S(teams[0], "train", lv)[k], list)]
         r1 = {}
         for k in ks:
-            x = np.array([S[(t, "train", lv)][k][0] for t in teams], float)
-            y = np.array([S[(t, "test", lv)][k][0] for t in teams], float)
+            x = np.array([S(t, "train", lv)[k][0] for t in teams], float)
+            y = np.array([S(t, "test", lv)[k][0] for t in teams], float)
             ok = ~(np.isnan(x) | np.isnan(y))
             x, y = x[ok], y[ok]
             r1[k] = {"icc": [mu.icc(x, y), boot(lambda i: mu.icc(x[i], y[i]), len(x))], "spearman": rho(x, y), "teams": int(ok.sum())}
         for k in STRUCT:
-            x = np.array([S[(t, "train", lv)]["null"]["N0"][k]["obs"] - S[(t, "train", lv)]["null"]["N0"][k]["mean"] for t in teams])
-            y = np.array([S[(t, "test", lv)]["null"]["N0"][k]["obs"] - S[(t, "test", lv)]["null"]["N0"][k]["mean"] for t in teams])
+            x = np.array([S(t, "train", lv)["null"]["N0"][k]["obs"] - S(t, "train", lv)["null"]["N0"][k]["mean"] for t in teams])
+            y = np.array([S(t, "test", lv)["null"]["N0"][k]["obs"] - S(t, "test", lv)["null"]["N0"][k]["mean"] for t in teams])
             r1[f"{k} excess over N0"] = {"icc": [mu.icc(x, y), boot(lambda i: mu.icc(x[i], y[i]), len(x))], "spearman": rho(x, y), "teams": len(teams)}
         out["R1"][lv] = r1
         out["R2"][lv] = {}
-        for n in S[(teams[0], "season", lv)]["null"]:
+        for n in S(teams[0], "season", lv)["null"]:
             out["R2"][lv][n] = {}
             for k in STRUCT:
-                e = [S[(t, "season", lv)]["null"][n][k] for t in teams]
-                se = [S[(t, "season", lv)][k][1] for t in teams]
-                ok = [i for i, s in enumerate(se) if s > 0]
+                e = [S(t, "season", lv)["null"][n][k] for t in teams]
+                se = [S(t, "season", lv)[k][1] for t in teams]
+                ok = [i for i, v in enumerate(se) if v > 0]
                 if not ok:
                     continue
                 m_, s_, t2 = mu.pool([e[i]["obs"] - e[i]["mean"] for i in ok], [se[i] ** 2 for i in ok])
                 out["R2"][lv][n][k] = {"mean_excess": m_, "se": s_, "tau2": t2, "teams": len(ok),
-                                       "z_above_2": sum(x["z"] > 2 for x in e), "z_below_-2": sum(x["z"] < -2 for x in e)}
-    out["names"] = {str(k): v for k, v in names.items()}
+                                       "z_above_2": int(sum(x["z"] > 2 for x in e)), "z_below_-2": int(sum(x["z"] < -2 for x in e))}
     return out
+
+
+def merge(stage):
+    """Join results/<stage>-part-*.json (structure parts) into one result with its summaries; the confirm stage's
+    explore part (part 'explore') is carried alongside."""
+    P = [json.loads(f.read_text(encoding="utf-8")) for f in sorted(OUT.glob(f"{stage}-part-*.json"))]
+    S = [q.get("structure", q) for q in P if "explore" not in q]
+    T = {k: v for q in S for k, v in q["teams"].items()}
+    out = {"settings": S[0]["settings"], "teams": T, **summary(T), "names": {k: v for q in S for k, v in q["names"].items()},
+           "parts": len(S)}
+    E = [q["explore"] for q in P if "explore" in q]
+    return {"structure": out, "explore": E[0]} if E else out
 
 
 # ---------------------------------------------------------------- explore (review R1, R3-R5 and power, exploratory)
@@ -766,13 +800,18 @@ def wy_collect(limit):
 
 
 def stage_confirm(limit=None):
-    """R1-R5 once on the confirmation cohort, under docs/PROTOCOL.md. Refuses unless the protocol is frozen."""
+    """R1-R5 once on the confirmation cohort, under docs/PROTOCOL.md. Refuses unless the protocol is frozen.
+    Sharded: FHA_SHARD = i/n computes every n-th team's structure; FHA_SHARD = explore computes R3-R5."""
     if not limit and "Status: frozen" not in (PROTOCOL.read_text(encoding="utf-8") if PROTOCOL.exists() else ""):
         raise SystemExit("confirm: docs/PROTOCOL.md is not frozen; the confirmation cohort stays closed")
     C, PP, res, names, league = wy_collect(limit)
     status = "confirmation (docs/PROTOCOL.md)" if not limit else "smoke test, not a confirmation"
-    return {"structure": structure(C, names, league, ["DF", "FW", "GK", "MD"], status),
-            "explore": explore(C, PP, res, status, power=False)}
+    if os.environ.get("FHA_SHARD") == "explore":
+        return {"explore": explore(C, PP, res, status, power=False)}
+    sh = shard()
+    pick = (lambda T: T[sh[0]::sh[1]]) if sh else None
+    st = structure(C, names, league, ["DF", "FW", "GK", "MD"], status, pick)
+    return {"structure": st} if sh else {"structure": st, "explore": explore(C, PP, res, status, power=False)}
 
 
 # ---------------------------------------------------------------- lineups (H6, gated)
@@ -868,6 +907,9 @@ def stage_lineup(limit=None):
 
 
 if __name__ == "__main__":
+    if os.environ.get("PYTHONHASHSEED") != "0":   # set iteration order fixes null draws; shards must agree with one run
+        os.environ["PYTHONHASHSEED"] = "0"
+        sys.exit(subprocess.call([sys.executable, "-m", "fha.run", *sys.argv[1:]]))
     a = sys.argv[1:]
     limit = int(a[a.index("--limit") + 1]) if "--limit" in a else None
     OUT.mkdir(exist_ok=True)
@@ -875,9 +917,15 @@ if __name__ == "__main__":
               "structure": stage_structure, "explore": stage_explore, "confirm": stage_confirm}
     versions = {"python": platform.python_version(), "numpy": np.__version__, "scipy (HiGHS)": scipy.__version__,
                 "scikit-learn": sklearn.__version__, "mcs": "symonyeal/Minimal-Metabolic-Interventions@a807469"}
-    for s in [x for x in a if x in stages]:
+    if "merge" in a:   # python -m fha.run merge <stage>: join the parts written by sharded jobs
+        s = a[a.index("merge") + 1]
+        r = {**merge(s), "versions": versions}
+        (OUT / f"{s}.json").write_text(json.dumps(r, indent=1, default=str, ensure_ascii=False), encoding="utf-8")
+        print(s, "merged", OUT / f"{s}.json")
+    part = os.environ.get("FHA_SHARD", "").split("/")[0]
+    for s in [x for x in a if x in stages and "merge" not in a]:
         r = {**stages[s](limit), "versions": versions}
-        name = f"{s}{'-smoke' if limit else ''}.json"
+        name = f"{s}{'-part-' + part if part else ''}{'-smoke' if limit else ''}.json"
         (OUT / name).write_text(json.dumps(r, indent=1, default=str, ensure_ascii=False), encoding="utf-8")
         print(s, "written", OUT / name)
         if limit and s != "confirm":   # a confirm smoke test prints nothing, so the cohort stays unseen
