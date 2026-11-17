@@ -1,7 +1,7 @@
 """Audit of the attack, lineup, defence and sequence results from the committed aggregates (results/*.json); no raw
 data and no Rust binary. Every number in docs/REVIEW.md section 2 is printed here.
 
-Usage: python -m fha.audit      prints D1-D9; seed 0, about two minutes.
+Usage: python -m fha.audit      prints D1-D9 (and D10 when results/structure.json exists); seed 0, about two minutes.
 
 Legend: F distinct groups (player sets) with c possessions and w xG; s support (players in any group);
 m chances; tau, nu as in docs/MODEL.md; phi Shapley share of the coverage game = sum_{A ni v} w_A / |A|.
@@ -12,8 +12,9 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 import numpy as np
-from scipy.optimize import LinearConstraint, milp
 from scipy.stats import spearmanr
+
+from fha import attack, mu
 
 R = Path(__file__).resolve().parents[1] / "results"
 g = np.random.default_rng(0)
@@ -25,28 +26,17 @@ def rho(a, b):
     return float(spearmanr(a, b).statistic)
 
 
-def inc(E, ids):
-    ix = {v: i for i, v in enumerate(ids)}
-    A = np.zeros((len(E), len(ids)))
-    for i, e in enumerate(E):
-        A[i, [ix[v] for v in e]] = 1
-    return A
+def unit(E):
+    return [(frozenset(e), 1.0) for e in {frozenset(e) for e in E}]
 
 
 def tau(E):
-    E = list({frozenset(e) for e in E})
-    ids = sorted({v for e in E for v in e})
-    r = milp(np.ones(len(ids)), constraints=LinearConstraint(inc(E, ids), 1, np.inf), integrality=1, bounds=(0, 1))
-    assert r.status == 0
-    return int(round(r.fun))
+    return mu.tau_a(unit(E), 1.0)
 
 
 def nu(E):
-    E = list({frozenset(e) for e in E})
-    ids = sorted({v for e in E for v in e})
-    r = milp(-np.ones(len(E)), constraints=LinearConstraint(inc(E, ids).T, -np.inf, 1), integrality=1, bounds=(0, 1))
-    assert r.status == 0
-    return int(round(-r.fun))
+    _, F, _ = mu.index(unit(E))
+    return attack.nu(F, max(map(max, F)) + 1)[0]
 
 
 def expand(G):
@@ -54,30 +44,24 @@ def expand(G):
     return [(frozenset(p), x / c) for p, c, x in G for _ in range(c)]
 
 
+def ch(G):
+    """Aggregated groups as weighted chances."""
+    return [(frozenset(p), x) for p, _, x in G]
+
+
 def phi(G):
-    d = Counter()
-    for p, c, x in G:
-        for v in p:
-            d[v] += x / len(p)
-    t = sum(d.values())
-    return {v: x / t for v, x in d.items()}
+    return mu.phi(ch(G))
 
 
-def hill(p, q):
-    p = np.array([x for x in p if x > 0])
-    return float(np.exp(-(p * np.log(p)).sum())) if q == 1 else float((p ** q).sum() ** (1 / (1 - q)))
+hill = mu.hill
 
 
 def covered(S, G):
-    S = set(S)
-    return sum(x for p, c, x in G if S & set(p)) / sum(x for p, c, x in G)
+    return mu.c(S, ch(G))
 
 
 def greedy(G, b):
-    S = []
-    for _ in range(b):
-        S.append(max({v for p, _, _ in G for v in p} - set(S), key=lambda v: (covered(S + [v], G), -v)))
-    return S
+    return mu.greedy(ch(G), b)
 
 
 def tau_a(G, a=0.9):
@@ -89,21 +73,8 @@ def tau_a(G, a=0.9):
 
 
 def null(E):
-    """Same player degrees and group sizes, memberships re-dealt (stub matching, duplicates repaired by swaps)."""
-    stubs = np.array([v for e in E for v in e])
-    cut = np.cumsum([len(e) for e in E])[:-1]
-    for _ in range(200):
-        g.shuffle(stubs)
-        P = np.split(stubs.copy(), cut)
-        for _ in range(20000):
-            bad = [i for i, e in enumerate(P) if len(set(e)) < len(e)]
-            if not bad:
-                return [frozenset(e) for e in P]
-            i = bad[0]
-            j = int(g.integers(len(P)))
-            a, b = int(g.integers(len(P[i]))), int(g.integers(len(P[j])))
-            P[i][a], P[j][b] = P[j][b], P[i][a]
-    raise RuntimeError("null: no simple re-deal found")
+    """N0 (fha.mu.redeal): same player degrees and group sizes, memberships re-dealt."""
+    return [A for A, _ in mu.redeal([(e, 1.0) for e in E], g)]
 
 
 A, Z, Y, L, D, Q = (load(s) for s in ("attack", "seasons", "wyscout", "lineup", "defence", "sequence"))
@@ -237,3 +208,15 @@ print(f"defence: base rate {h(D['rate']['test']):.4f}; base {ll['base']:.4f}; sh
 print(f"  gain of ball position {h(D['rate']['test']) - ll['base']:.4f}; shape {ll['base'] - ll['shape']:.4f}; gap+hole {ll['shape'] - ll['gaps']:.4f}")
 ql = Q["logloss"]
 print(f"sequence: base rate {h(Q['rate']['test']):.4f}; " + "; ".join(f"model {k} {v:.4f}" for k, v in ql.items()))
+
+if (R / "structure.json").exists():
+    X = load("structure")
+    print("\n== D10 structure stage (exploratory; python -m fha.run structure): R1 reliability between halves, ICC(2,1) and Spearman")
+    for lv, r1 in X["R1"].items():
+        for k, v in r1.items():
+            print(f"{lv:6s} {k:24s} ICC {v['icc'][0]:+.2f} ({v['icc'][1][0]:+.2f} to {v['icc'][1][1]:+.2f})   Spearman {v['spearman'][0]:+.2f}   teams {v['teams']}")
+    print("R2 pooled excess over each null, full seasons (random-effects mean +- se; teams with z > 2 and z < -2)")
+    for lv, r2 in X["R2"].items():
+        for n, v in r2.items():
+            print(f"{lv:6s} {n}  " + "   ".join(f"{k} {x['mean_excess']:+.3f} +- {x['se']:.3f} ({x['z_above_2']}, {x['z_below_-2']})" for k, x in v.items()))
+

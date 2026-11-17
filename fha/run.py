@@ -1,6 +1,6 @@
 """Registered tests H1-H3 and H5 (docs/HYPOTHESES.md) on StatsBomb open data, streamed at a pinned commit.
 
-Usage: python -m fha.run attack|defence|sequence|lineup|seasons|wyscout [--limit N]   (writes results/<stage>.json; --limit is a smoke test)
+Usage: python -m fha.run attack|defence|sequence|lineup|seasons|wyscout|structure [--limit N]   (writes results/<stage>.json; --limit is a smoke test)
 Raw data is never kept: it is held in memory, except one event file at a time in a temporary runner directory for
 socceraction (StatsBomb Public Data User Agreement 1.2.1).
 
@@ -8,11 +8,13 @@ Legend: W window ('train' weeks 1-19 or 'test' 20-38), F family of attacking gro
 """
 
 import json
+import os
 import platform
 import sys
 import time
 import urllib.request
 from collections import Counter, defaultdict
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -24,7 +26,7 @@ from sklearn.metrics import log_loss
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
-from fha import attack, defence, sb, wy
+from fha import attack, defence, mu, sb, wy
 
 SHA = "4b73468fc5b0f1950f9f66fada70ad3a4f9327cb"
 RAW = f"https://raw.githubusercontent.com/hudl/open-data/{SHA}/data"
@@ -60,8 +62,10 @@ def rho(a, b):
 # ---------------------------------------------------------------- attack (H1-H3)
 
 def collect(limit):
-    """Per team and window: attacking groups, usage, names; per match: lineups and open-play xG."""
+    """Per team and window: attacking groups, usage, names, and each chance with its match and the members' roles;
+    per match: lineups and open-play xG."""
     G = defaultdict(list)            # (team, W) -> [(A, xg)]
+    C = defaultdict(list)            # (team, W) -> [(match, A, xg, {player: role})]
     U = defaultdict(Counter)         # (team, W) -> player -> on-ball actions
     names, league = {}, {}
     games = []                       # (team, opp, W, xg, started set, appeared set)
@@ -74,8 +78,10 @@ def collect(limit):
             h, a = m["home_team"]["home_team_id"], m["away_team"]["away_team_id"]
             names[h], names[a] = m["home_team"]["home_team_name"], m["away_team"]["away_team_name"]
             league[h] = league[a] = m["competition"]["competition_name"]
+            ro = sb.roles(ev)
             for g in sb.attack_groups(ev):
                 G[(g["team"], W)].append((g["A"], g["xg"]))
+                C[(g["team"], W)].append((m["match_id"], g["A"], g["xg"], {v: ro[v] for v in g["A"]}))
             xg = Counter()
             for e in ev:
                 if "player" in e:
@@ -89,7 +95,7 @@ def collect(limit):
                 ap = {p["player_id"] for p in t["lineup"] if p["positions"]}
                 o = a if t["team_id"] == h else h
                 games.append((t["team_id"], o, W, xg[t["team_id"]], st, ap))
-    return G, U, names, league, games
+    return G, U, names, league, games, C
 
 
 def measures(Fw, U):
@@ -113,7 +119,7 @@ def measures(Fw, U):
 
 
 def stage_attack(limit=None):
-    G, U, names, league, games = collect(limit)
+    G, U, names, league, games, _ = collect(limit)
     teams = sorted({t for t, W in G if (t, "test") in G and (t, "train") in G})
     R = {}
     for q in (0.0, 0.1):
@@ -532,6 +538,93 @@ def stage_wyscout(limit=None):
     return out
 
 
+# ---------------------------------------------------------------- structure (review phase 2, exploratory)
+
+NB, NR, RM = 100, 40, 100   # match resamples, draws per null model, chances for the rarefied tau
+FIRST = {"D1": lambda G: mu.hill(mu.phi(G).values(), 1), "D2": lambda G: mu.hill(mu.phi(G).values(), 2),
+         "top_phi": lambda G: max(mu.phi(G).values())}
+STRUCT = {"c2": lambda G: mu.cb(G, 2)[0], "c3": lambda G: mu.cb(G, 3)[0], "tau_0.9": lambda G: mu.tau_a(G, 0.9),
+          "o2": lambda G: mu.o(mu.top(G, 2), G)}
+
+
+def rare(G, g):
+    """tau at a common RM chances (mean over 5 subsamples)."""
+    return mu.rarefy(G, RM, lambda H: mu.tau_a(H, 1.0), 5, g)
+
+
+def window(job):
+    """One team window at one level ('player' or 'role'): each statistic with its within-team standard error
+    (matches resampled), and observed, mean, sd and z of the structural ones under N0, N1 (players only) and N2."""
+    level, rows, seed = job
+    g = np.random.default_rng(seed)
+    if level == "role":
+        rows = [(i, frozenset(r.values()), x, None) for i, _, x, r in rows]
+    G = [(A, x) for _, A, x, _ in rows]
+    by = defaultdict(list)
+    for i, A, x, _ in rows:
+        by[i].append((A, x))
+    Gm = list(by.values())
+    F = {**FIRST, **STRUCT}
+    if level == "player" and len(G) >= RM:
+        F["tau_rare"] = lambda H: rare(H, g) if len(H) >= RM else float("nan")
+    out = {"m": len(G), "xg": sum(x for _, x in G), "matches": len(Gm)}
+    out.update({k: [f(G), mu.boot(Gm, f, NB, g)] for k, f in F.items()})
+    nulls = {"N0": mu.redeal, "N2": mu.pairwise}
+    if level == "player":
+        R = [r for *_, r in rows]
+        nulls["N1"] = lambda H, g: mu.redeal(H, g, R)
+    out["null"] = {k: mu.excess(G, f, STRUCT, NR, g) for k, f in nulls.items()}
+    return out
+
+
+def stage_structure(limit=None):
+    """Exploration cohort (2015/16 leagues, review 4.5): functionals of the chance measure for the two half-seasons
+    and the full season, at player and role level, with standard errors and null distributions; exploratory
+    reliability (R1) and pooled excess over each null (R2). This cohort is spent for confirmation."""
+    _, _, names, league, _, C = collect(limit)
+    teams = sorted({t for t, W in C if (t, "train") in C and (t, "test") in C})
+    rows = {(t, W): C[(t, W)] for t in teams for W in ("train", "test")}
+    rows.update({(t, "season"): C[(t, "train")] + C[(t, "test")] for t in teams})
+    jobs = [(t, W, lv) for (t, W) in rows for lv in ("player", "role")]
+    with ProcessPoolExecutor(os.cpu_count()) as ex:
+        res = list(ex.map(window, [(lv, rows[(t, W)], SEED + k) for k, (t, W, lv) in enumerate(jobs)], chunksize=1))
+    S = {(t, W, lv): r for (t, W, lv), r in zip(jobs, res)}
+    out = {"settings": {"match_resamples": NB, "null_draws": NR, "rarefied_chances": RM, "seed": SEED,
+                        "roles": sorted(set(sb.ROLE.values())), "status": "exploratory (docs/REVIEW.md 4.5)"},
+           "teams": {names[t]: {"league": league[t], **{W: {lv: S[(t, W, lv)] for lv in ("player", "role")} for W in ("train", "test", "season")},
+                                "groups_role": {W: attack.agg([(frozenset(r.values()), x) for _, _, x, r in rows[(t, W)]]) for W in ("train", "test")}}
+                     for t in teams},
+           "R1": {}, "R2": {}}
+    for lv in ("player", "role"):
+        ks = [k for k in S[(teams[0], "train", lv)] if isinstance(S[(teams[0], "train", lv)][k], list)]
+        r1 = {}
+        for k in ks:
+            x = np.array([S[(t, "train", lv)][k][0] for t in teams], float)
+            y = np.array([S[(t, "test", lv)][k][0] for t in teams], float)
+            ok = ~(np.isnan(x) | np.isnan(y))
+            x, y = x[ok], y[ok]
+            r1[k] = {"icc": [mu.icc(x, y), boot(lambda i: mu.icc(x[i], y[i]), len(x))], "spearman": rho(x, y), "teams": int(ok.sum())}
+        for k in STRUCT:
+            x = np.array([S[(t, "train", lv)]["null"]["N0"][k]["obs"] - S[(t, "train", lv)]["null"]["N0"][k]["mean"] for t in teams])
+            y = np.array([S[(t, "test", lv)]["null"]["N0"][k]["obs"] - S[(t, "test", lv)]["null"]["N0"][k]["mean"] for t in teams])
+            r1[f"{k} excess over N0"] = {"icc": [mu.icc(x, y), boot(lambda i: mu.icc(x[i], y[i]), len(x))], "spearman": rho(x, y), "teams": len(teams)}
+        out["R1"][lv] = r1
+        out["R2"][lv] = {}
+        for n in S[(teams[0], "season", lv)]["null"]:
+            out["R2"][lv][n] = {}
+            for k in STRUCT:
+                e = [S[(t, "season", lv)]["null"][n][k] for t in teams]
+                se = [S[(t, "season", lv)][k][1] for t in teams]
+                ok = [i for i, s in enumerate(se) if s > 0]
+                if not ok:
+                    continue
+                m_, s_, t2 = mu.pool([e[i]["obs"] - e[i]["mean"] for i in ok], [se[i] ** 2 for i in ok])
+                out["R2"][lv][n][k] = {"mean_excess": m_, "se": s_, "tau2": t2, "teams": len(ok),
+                                       "z_above_2": sum(x["z"] > 2 for x in e), "z_below_-2": sum(x["z"] < -2 for x in e)}
+    out["names"] = {str(k): v for k, v in names.items()}
+    return out
+
+
 # ---------------------------------------------------------------- lineups (H6, gated)
 
 def stage_lineup(limit=None):
@@ -628,7 +721,8 @@ if __name__ == "__main__":
     a = sys.argv[1:]
     limit = int(a[a.index("--limit") + 1]) if "--limit" in a else None
     OUT.mkdir(exist_ok=True)
-    stages = {"attack": stage_attack, "defence": stage_defence, "sequence": stage_sequence, "lineup": stage_lineup, "seasons": stage_seasons, "wyscout": stage_wyscout}
+    stages = {"attack": stage_attack, "defence": stage_defence, "sequence": stage_sequence, "lineup": stage_lineup, "seasons": stage_seasons, "wyscout": stage_wyscout,
+              "structure": stage_structure}
     versions = {"python": platform.python_version(), "numpy": np.__version__, "scipy (HiGHS)": scipy.__version__,
                 "scikit-learn": sklearn.__version__, "mcs": "symonyeal/Minimal-Metabolic-Interventions@a807469"}
     for s in [x for x in a if x in stages]:

@@ -47,9 +47,36 @@ $P \subset \mathbb R^2$: visible outfield defenders in metres.
   complex is a subcomplex of the Delaunay triangulation, so `h1` is a function of the same triangles as `hole`.
 - `width`, `depth`, `area`: range across, range along, convex-hull area.
 
-## 5. Sources
+## 5. Chance-measure functionals (`fha/mu.py`; review section 4)
+
+$\mu(A)$ is the share of a window's open-play xG from chances whose group is $A$. Each statistic is a functional of
+$\mu$, reported with a within-team standard error from resampling matches (`boot`).
+
+| Quantity | Definition | Computation |
+| --- | --- | --- |
+| $d_v$, $\varphi_v$ | $\mu\{A \ni v\}$; $\sum_{A \ni v}\mu(A)/\lvert A\rvert$ (Shapley value of the coverage game) | Direct |
+| $D_q$ | Hill number of $\varphi$ | Direct |
+| $c(S)$, $c(b)$ | $\mu\{A : A \cap S \ne \emptyset\}$; its maximum over $\lvert S\rvert = b$ | HiGHS ILP (`attack.cov`) |
+| $\tau_\alpha$ | $\min\{b : c(b) \ge \alpha\}$ | One HiGHS ILP |
+| $o(S)$ | $1 - c(S)/\sum_{v\in S} d_v$, for $S$ the two most involved players | Direct |
+| $\tau$ rarefied | Mean $\tau$ over subsamples of 100 chances | `rarefy` |
+
+Null models, each drawn 40 times per window; the excess is observed minus null mean, $z$ its standardised form.
+
+| Null | Preserves | Construction |
+| --- | --- | --- |
+| N0 | Each player's number of chances; each chance's size and xG | Stub re-deal, repeated players repaired by swaps |
+| N1 | N0 within roles (nine roles merged from StatsBomb positions, `sb.ROLE`) | Stub re-deal within roles |
+| N2 | Pair co-involvement counts among chances of three players | Log-linear model with no three-way interaction, fitted by generalised iterative scaling (`fit3`) |
+
+Roles: a player's role in a match is the role of the position most often on their events. At role level a chance's
+group is the set of its members' roles.
+
+## 6. Sources
 
 - Murakami and Uno (2014), MMCS, *Discrete Applied Mathematics* 170; implementation `symonyeal/Minimal-Metabolic-Interventions` at `a807469`.
 - Josephs and Upton, *Hypergraph adjusted plus-minus*, J. Quant. Anal. Sports 22(1), 2026, doi:10.1515/jqas-2024-0057 (lineup study, gated).
 - Decroos, Bransen, Van Haaren and Davis, *Actions speak louder than goals*, KDD 2019 (VAEP; sequence study).
 - GUDHI 3.13 alpha complex documentation.
+- Bishop, Fienberg and Holland, *Discrete Multivariate Analysis* (1975): no-three-way-interaction models (N2).
+- Shrout and Fleiss, *Psychological Bulletin* 86 (1979): ICC(2,1); DerSimonian and Laird, *Controlled Clinical Trials* 7 (1986): random-effects pooling.

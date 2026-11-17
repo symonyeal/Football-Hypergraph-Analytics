@@ -3,9 +3,30 @@
 Legend: ev one event (StatsBomb JSON), on the possession team's on-ball actions in event order.
 """
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 
 ON = {"Pass", "Carry", "Dribble", "Shot"}
+
+# StatsBomb positions merged to nine roles (docs/REVIEW.md 4.2); left and right sides are one role
+ROLE = {"Goalkeeper": "GK", "Center Back": "CB", "Left Center Back": "CB", "Right Center Back": "CB",
+        "Left Back": "FB", "Right Back": "FB", "Left Wing Back": "FB", "Right Wing Back": "FB",
+        "Center Defensive Midfield": "DM", "Left Defensive Midfield": "DM", "Right Defensive Midfield": "DM",
+        "Center Midfield": "CM", "Left Center Midfield": "CM", "Right Center Midfield": "CM",
+        "Left Midfield": "WM", "Right Midfield": "WM",
+        "Center Attacking Midfield": "AM", "Left Attacking Midfield": "AM", "Right Attacking Midfield": "AM",
+        "Left Wing": "W", "Right Wing": "W",
+        "Center Forward": "CF", "Left Center Forward": "CF", "Right Center Forward": "CF", "Striker": "CF", "Secondary Striker": "CF"}
+
+
+def roles(events):
+    """Each player's role in one match: the role of the position most often on their events (events tagged with
+    no playing position, such as 'Substitute', are skipped)."""
+    n = defaultdict(Counter)
+    for e in events:
+        r = ROLE.get(e.get("position", {}).get("name"))
+        if "player" in e and r:
+            n[e["player"]["id"]][r] += 1
+    return {v: c.most_common(1)[0][0] for v, c in n.items()}
 
 
 def metres(l):
