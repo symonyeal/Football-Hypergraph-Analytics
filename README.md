@@ -9,29 +9,36 @@ and Ligue 1; four Women's Super League seasons and other women's leagues; World 
 2023; Barcelona's La Liga matches 2004/05 to 2020/21; 360 freeze frames for eleven competitions) and the Wyscout public
 data set (complete 2017/18 Premier League, La Liga, Bundesliga, Serie A and Ligue 1, the 2018 World Cup and Euro 2016).
 
-**Answer.** Confirmed on the 98 teams of the Wyscout 2017/18 leagues, under a protocol frozen and tagged before
-that data was opened ([protocol](docs/PROTOCOL.md), [results](results/confirm.md)):
+**Answer.** From the 98 teams of the Wyscout 2017/18 leagues, under a protocol frozen and tagged before that data
+was opened ([protocol](docs/PROTOCOL.md), [results](results/confirm.md)), read by the protocol's primary verdicts:
 
-- **Reproducible, weakly.** How concentrated a team's chance creation is repeats between half-seasons: reliability
-  0.38 for the effective number of creators, 0.33 for the share two players touch, 0.29 for the players needed to
-  touch 90% of the danger. All three intervals lie above zero.
-- **Beyond involvement and the pass network, but by little.** Chances are more concentrated than a model that keeps
-  only how often each pair of players shares a chance: by 1.7 points of xG share (interval 1.0 to 2.5), under the
-  2 points the protocol set as the smallest effect of interest. Team by team, the part beyond each player's
-  involvement count does not repeat between halves.
-- **Not related to results.** Adding these measures to a team's first-half xG does not improve the prediction of its
-  second-half xG or points (equivalent to no improvement within the protocol's margin).
+- **Reproducible: yes, weakly.** How concentrated a team's chance creation is repeats between half-seasons:
+  reliability 0.38 for the effective number of creators, 0.33 for the share two players touch, 0.29 for the players
+  needed to touch 90% of the danger. All three intervals lie above zero.
+- **Beyond pairwise co-involvement: yes, by a small amount.** Chances are more concentrated than a model that keeps
+  only how often each pair of players shares a chance, by 1.7 points of xG share (interval 1.0 to 2.5). The protocol's
+  rule counts this as supported; the estimate is below the 2 points it set as the smallest effect of interest, and
+  the interval straddles that margin. Team by team, there is no evidence that the part beyond each player's
+  involvement count repeats between halves (reliability 0.10, interval −0.10 to 0.28).
+- **Related to results: no.** Adding these measures to a team's first-half xG does not improve the prediction of its
+  second-half xG (change in R² −0.013, interval −0.015 to 0.010: equivalent to no improvement within the 0.05 margin).
 
-In practice, ranking players by how many chances they are involved in picks the key players as well as the exact
-set-cover optimum; ranking by passes made and received does much worse. Whether missing key players costs xG could
-not be resolved with this data. The StatsBomb 2015/16 leagues used to build the tests gave the same answers, with a
-larger excess over the pairwise model (2.5 points).
+Choosing two key players by the exact set-cover optimum did not beat ranking them by how many chances they were
+involved in (difference −0.7 points of xG share, interval −2.0 to 0.6; equivalence not established). Ranking by
+passes made and received did much worse (22 points less). The absence model gave no usable estimate of what missing
+key players cost, as its power analysis predicted.
+
+On the StatsBomb 2015/16 leagues used to build the tests, reliability and the outcome result were similar, the
+excess over the pairwise model was larger (2.5 points), and the exact optimum was equivalent to ranking by
+involvement. One deviation from the protocol is recorded (post hoc note P6): a fallback sampler made 2,641 of about
+29,400 draws of the two null models that re-deal players; the primary comparison uses the pairwise model and does not
+depend on it.
 
 How the project got here: a first round of tests ([registered hypotheses](docs/HYPOTHESES.md), [post hoc
 notes](docs/POSTHOC.md)) was reviewed on 16 November 2026 ([design review](docs/REVIEW.md); `python -m fha.audit`
 reproduces its numbers). The review found that the first round's measures rose with the number of chances observed
 and were largely reproduced by involvement counts, and set out the measures, null models and protocol used for the
-answer above. One deviation from the protocol is recorded (post hoc note P6).
+answer above.
 
 ## What a chance is
 
