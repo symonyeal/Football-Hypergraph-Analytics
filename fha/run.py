@@ -1,18 +1,20 @@
 """Registered tests H1-H3 and H5 (docs/HYPOTHESES.md) on StatsBomb open data, streamed at a pinned commit.
 
-Usage: python -m fha.run attack|defence|sequence|lineup|seasons|wyscout|structure|explore [--limit N]   (writes results/<stage>.json; --limit is a smoke test)
+Usage: python -m fha.run attack|defence|sequence|lineup|seasons|wyscout|structure|explore|confirm [--limit N]   (writes results/<stage>.json; --limit is a smoke test)
 Raw data is never kept: it is held in memory, except one event file at a time in a temporary runner directory for
 socceraction (StatsBomb Public Data User Agreement 1.2.1).
 
 Legend: W window ('train' weeks 1-19 or 'test' 20-38), F family of attacking groups, w xG weights.
 """
 
+import io
 import json
 import os
 import platform
 import sys
 import time
 import urllib.request
+import zipfile
 from collections import Counter, defaultdict
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
@@ -491,12 +493,7 @@ def xg_model(limit=None):
 def stage_wyscout(limit=None):
     """Attack measures for every team with at least MIN_MATCHES matches in the Wyscout public data (2017/18 five
     leagues, World Cup 2018, Euro 2016). xG from xg_model; calibration against Wyscout goals is reported."""
-    import io
-    import zipfile
-    import os
-    local = os.environ.get("FHA_WY_DIR")   # a folder holding the four figshare files, for local smoke tests
-    name = {"events": "events.zip", "matches": "matches.zip", "players": "players.json", "teams": "teams.json"}
-    blob = {k: (Path(local, name[k]).read_bytes() if local else urllib.request.urlopen(FIG + v, timeout=600).read()) for k, v in WY_FILES.items()}
+    blob = wy_load()
     players = {p["wyId"]: p for p in json.loads(blob["players"])}
     teams = {t["wyId"]: wy.unescape(t["name"]) for t in json.loads(blob["teams"])}
     f, fit = xg_model(limit)
@@ -584,11 +581,16 @@ def window(job):
 
 
 def stage_structure(limit=None):
-    """Exploration cohort (2015/16 leagues, review 4.5): functionals of the chance measure for the two half-seasons
-    and the full season, at player and role level, with standard errors and null distributions; exploratory
-    reliability (R1) and pooled excess over each null (R2). This cohort is spent for confirmation."""
+    """Exploration cohort (2015/16 leagues, review 4.5): structure() on StatsBomb chances. Exploratory; this cohort
+    is spent for confirmation."""
     _, _, names, league, _, X = collect(limit)
-    C = X["chances"]
+    return structure(X["chances"], names, league, sorted(set(sb.ROLE.values())), "exploratory (docs/REVIEW.md 4.5)")
+
+
+def structure(C, names, league, roles, status):
+    """Functionals of the chance measure for the two half-seasons and the full season, at player and role level,
+    with standard errors and null distributions; reliability between halves (R1) and pooled excess over each null
+    over full seasons (R2). C: (team, W) -> [(match, A, xG, {player: role})]."""
     teams = sorted({t for t, W in C if (t, "train") in C and (t, "test") in C})
     rows = {(t, W): C[(t, W)] for t in teams for W in ("train", "test")}
     rows.update({(t, "season"): C[(t, "train")] + C[(t, "test")] for t in teams})
@@ -597,7 +599,7 @@ def stage_structure(limit=None):
         res = list(ex.map(window, [(lv, rows[(t, W)], SEED + k) for k, (t, W, lv) in enumerate(jobs)], chunksize=1))
     S = {(t, W, lv): r for (t, W, lv), r in zip(jobs, res)}
     out = {"settings": {"match_resamples": NB, "null_draws": NR, "rarefied_chances": RM, "seed": SEED,
-                        "roles": sorted(set(sb.ROLE.values())), "status": "exploratory (docs/REVIEW.md 4.5)"},
+                        "roles": roles, "status": status},
            "teams": {names[t]: {"league": league[t], **{W: {lv: S[(t, W, lv)] for lv in ("player", "role")} for W in ("train", "test", "season")},
                                 "groups_role": {W: attack.agg([(frozenset(r.values()), x) for _, _, x, r in rows[(t, W)]]) for W in ("train", "test")}}
                      for t in teams},
@@ -641,12 +643,18 @@ NP = int(os.environ.get("FHA_SIMS", 200))   # power simulations; FHA_SIMS lowers
 def stage_explore(limit=None):
     """Exploration cohort (2015/16 leagues): R3 selection at small budgets, R4 absence model, R5 incremental
     prediction, and power simulations for R1 and R4 at the confirmation cohort's size. Exploratory throughout."""
-    _, _, names, league, _, X = collect(limit)
-    C, PP, res = X["chances"], X["passes"], X["results"]
+    _, _, _, _, _, X = collect(limit)
+    return explore(X["chances"], X["passes"], X["results"], "exploratory (docs/REVIEW.md 4.5)", power=True)
+
+
+def explore(C, PP, res, status, power):
+    """R3 selection at small budgets, R4 absence model, R5 incremental prediction; with power, simulations for R1
+    and R4 at the confirmation cohort's size. C as in structure(); PP: (team, W) -> Counter of completed passes;
+    res: (team, opp, W, home, open-play xG, goals for, goals against, appeared set) per team and match."""
     ch = {k: [(A, x) for _, A, x, _ in v] for k, v in C.items()}
     teams = sorted({t for t, W in ch if (t, "train") in ch and (t, "test") in ch})
     g = np.random.default_rng(SEED)
-    out = {"settings": {"seed": SEED, "status": "exploratory (docs/REVIEW.md 4.5)"}, "R3": {}, "R4": {}, "R5": {}, "power": {}}
+    out = {"settings": {"seed": SEED, "status": status}, "R3": {}, "R4": {}, "R5": {}, "power": {}}
     # R3: held-out coverage of b players chosen on the first half
     for b in range(1, 6):
         cv = defaultdict(list)
@@ -671,7 +679,8 @@ def stage_explore(limit=None):
     ci = protocol.boot4(rows, 500, g)
     out["R4"] = {"beta": [b4, ci[0]], "delta": [d4, ci[1]], "dispersion": disp, "matches": len(rows),
                  "share_with_absence": float(np.mean([r["a"] > 0 for r in rows])), "mean_absent_phi": float(np.mean([r["a"] for r in rows]))}
-    out["power"]["R4"] = protocol.power4(rows, [0.25, 0.5, 1.0, 2.0], NP, g)
+    if power:
+        out["power"]["R4"] = protocol.power4(rows, [0.25, 0.5, 1.0, 2.0], NP, g)
     # R5: second-half xG and points per match from first-half xG per match, with and without structure
     per = defaultdict(lambda: defaultdict(list))
     for t, o, W, h, xg, gf, ga, ap in res:
@@ -685,11 +694,83 @@ def stage_explore(limit=None):
         inc = lambda i: protocol.loo_r2(np.column_stack([x0[i], S[i]]), y[i]) - protocol.loo_r2(x0[i][:, None], y[i])
         out["R5"][k] = {"loo_r2_base": base, "loo_r2_with_structure": full, "increment": [full - base, boot(inc, len(y))],
                         "structure": ["D1 of phi", "c(2)"]}
-    # R1 power at the confirmation cohort's size: lower bound of the ICC above 0.3
-    out["power"]["R1"] = {"teams": WY_TEAMS, "lower_bound": 0.3,
-                          "power": {r: protocol.icc_power(r, WY_TEAMS, 0.3, NP, 500, g) for r in (0.3, 0.4, 0.5, 0.6)}}
+    if power:   # R1 at the confirmation cohort's size: lower bound of the ICC above 0.3
+        out["power"]["R1"] = {"teams": WY_TEAMS, "lower_bound": 0.3,
+                              "power": {r: protocol.icc_power(r, WY_TEAMS, 0.3, NP, 500, g) for r in (0.3, 0.4, 0.5, 0.6)}}
     out["teams"] = len(teams)
     return out
+
+
+# ---------------------------------------------------------------- confirm (review phase 4: Wyscout 2017/18, once)
+
+PROTOCOL = Path(__file__).resolve().parents[1] / "docs" / "PROTOCOL.md"
+WY_LEAGUES = ("England", "Spain", "Germany", "Italy", "France")
+
+
+def wy_load():
+    """The four Wyscout figshare files as bytes (FHA_WY_DIR: a local folder holding them, for smoke tests)."""
+    local = os.environ.get("FHA_WY_DIR")
+    name = {"events": "events.zip", "matches": "matches.zip", "players": "players.json", "teams": "teams.json"}
+    return {k: (Path(local, name[k]).read_bytes() if local else urllib.request.urlopen(FIG + v, timeout=600).read()) for k, v in WY_FILES.items()}
+
+
+def wy_collect(limit):
+    """Wyscout 2017/18 leagues in the shapes structure() and explore() take. Halves: gameweeks up to half the
+    season's last gameweek, then the rest. Roles: Wyscout's player role (GK, DF, MD, FW). A completed pass's
+    recipient is the player of the next event of the same possession, when it is a teammate."""
+    blob = wy_load()
+    players = {p["wyId"]: p for p in json.loads(blob["players"])}
+    tname = {t["wyId"]: wy.unescape(t["name"]) for t in json.loads(blob["teams"])}
+    f, _ = xg_model(limit)
+    zE, zM = zipfile.ZipFile(io.BytesIO(blob["events"])), zipfile.ZipFile(io.BytesIO(blob["matches"]))
+    C, PP, res = defaultdict(list), defaultdict(Counter), []
+    names, league = {}, {}
+    role = lambda v: players.get(int(v[1:]), {}).get("role", {}).get("code2", "NA")
+    for nm in WY_LEAGUES:
+        ms = json.loads(zM.read(f"matches_{nm}.json"))
+        ms = ms[:limit] + ms[-limit:] if limit else ms
+        half = max(m["gameweek"] for m in ms) // 2
+        by = defaultdict(list)
+        mids = {m["wyId"] for m in ms}
+        for e in json.loads(zE.read(f"events_{nm}.json")):
+            if e["matchId"] in mids:
+                by[e["matchId"]].append(e)
+        for m in ms:
+            W = "train" if m["gameweek"] <= half else "test"
+            E = by[m["wyId"]]
+            xg = Counter()
+            for gr in wy.attack_groups(E):
+                x = float(f.predict_proba(np.array([q[:3] for q in gr["shots"]]))[:, 1].sum())
+                xg[gr["team"]] += x
+                C[(gr["team"], W)].append((m["wyId"], gr["A"], x, {v: role(v) for v in gr["A"]}))
+            for P in wy.possessions(E):
+                for e, n in zip(P, P[1:]):
+                    if wy.control(e) and e["eventName"] == "Pass" and n["teamId"] == e["teamId"] and n["playerId"] and n["playerId"] != e["playerId"]:
+                        PP[(e["teamId"], W)][(f"w{e['playerId']}", f"w{n['playerId']}")] += 1
+            T = {int(t): d for t, d in m["teamsData"].items()}
+            for t, d in T.items():
+                o = next(u for u in T if u != t)
+                fm = d.get("formation") or {}
+                ap = {f"w{q['playerId']}" for q in fm.get("lineup", [])} | {f"w{q['playerIn']}" for q in fm.get("substitutions") or [] if isinstance(q, dict) and q.get("playerIn")}
+                res.append((t, o, W, int(d["side"] == "home"), xg[t], d["score"], T[o]["score"], ap))
+                names[t], league[t] = tname.get(t, str(t)), nm
+    for (t, _), v in C.items():
+        for _, A, _, _ in v:
+            for p in A:
+                q = players.get(int(p[1:]))
+                if q:
+                    names[p] = wy.unescape(q["shortName"])
+    return C, PP, res, names, league
+
+
+def stage_confirm(limit=None):
+    """R1-R5 once on the confirmation cohort, under docs/PROTOCOL.md. Refuses unless the protocol is frozen."""
+    if not limit and "Status: frozen" not in (PROTOCOL.read_text(encoding="utf-8") if PROTOCOL.exists() else ""):
+        raise SystemExit("confirm: docs/PROTOCOL.md is not frozen; the confirmation cohort stays closed")
+    C, PP, res, names, league = wy_collect(limit)
+    status = "confirmation (docs/PROTOCOL.md)" if not limit else "smoke test, not a confirmation"
+    return {"structure": structure(C, names, league, ["DF", "FW", "GK", "MD"], status),
+            "explore": explore(C, PP, res, status, power=False)}
 
 
 # ---------------------------------------------------------------- lineups (H6, gated)
@@ -789,7 +870,7 @@ if __name__ == "__main__":
     limit = int(a[a.index("--limit") + 1]) if "--limit" in a else None
     OUT.mkdir(exist_ok=True)
     stages = {"attack": stage_attack, "defence": stage_defence, "sequence": stage_sequence, "lineup": stage_lineup, "seasons": stage_seasons, "wyscout": stage_wyscout,
-              "structure": stage_structure, "explore": stage_explore}
+              "structure": stage_structure, "explore": stage_explore, "confirm": stage_confirm}
     versions = {"python": platform.python_version(), "numpy": np.__version__, "scipy (HiGHS)": scipy.__version__,
                 "scikit-learn": sklearn.__version__, "mcs": "symonyeal/Minimal-Metabolic-Interventions@a807469"}
     for s in [x for x in a if x in stages]:
@@ -797,5 +878,5 @@ if __name__ == "__main__":
         name = f"{s}{'-smoke' if limit else ''}.json"
         (OUT / name).write_text(json.dumps(r, indent=1, default=str, ensure_ascii=False), encoding="utf-8")
         print(s, "written", OUT / name)
-        if limit:
+        if limit and s != "confirm":   # a confirm smoke test prints nothing, so the cohort stays unseen
             print(json.dumps({k: v for k, v in r.items() if k not in ("teams", "names", "coef")}, default=str)[:20000])
