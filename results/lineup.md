@@ -13,20 +13,4 @@ A player's rating is the change in the team's open-play xG difference per 90 min
 
 **H6.** Players eligible in both halves: 283. Split-half Spearman 0.52 (0.42 to 0.61): holds.
 
-| Highest rated | xG/90 | Lowest rated | xG/90 |
-| --- | --- | --- | --- |
-| Zlatan Ibrahimović | 0.095 | Lossémy Karaboué | -0.050 |
-| Karim Benzema | 0.071 | Rubén Rochina | -0.048 |
-| Edinson Cavani | 0.067 | Fabien Camus | -0.046 |
-| Ángel Di María | 0.066 | Paolo Sammarco | -0.044 |
-| Jordi Alba | 0.064 | Benjamin Nivet | -0.044 |
-| Ivan Rakitić | 0.063 | Jordan Ayew | -0.044 |
-| Alexis Sánchez | 0.063 | Corentin Jean | -0.044 |
-| Thiago Motta | 0.061 | Leonardo Blanchard | -0.041 |
-| Marcelo | 0.057 | Mirko Gori | -0.037 |
-| David Luiz | 0.056 | Leandro Bacuna | -0.037 |
-| Pepe | 0.056 | Federico Dionisi | -0.035 |
-| Gerard Piqué | 0.055 | François Modesto | -0.033 |
-| Lucas Moura | 0.053 | Isaac Success | -0.033 |
-| Maxwell | 0.053 | Rubén Pérez | -0.032 |
-| Paulo Dybala | 0.052 | Matthieu Saunier | -0.030 |
+**Withdrawn (review 3.5).** 87% of the variance of the ratings lies between teams, and cross-validation chose the largest penalty in both halves with error still falling. The split-half correlation measures the stability of team strength, so no ratings table is published.

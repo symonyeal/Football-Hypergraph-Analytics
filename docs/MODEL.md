@@ -1,7 +1,7 @@
 # Model
 
-Notation and measures. Registered tests and settings: `HYPOTHESES.md`. Design review and sources: the proposal this
-repository was built from (RESEARCH.md, 10 November 2026), summarized here.
+Notation and measures. Registered tests and settings: `HYPOTHESES.md`. Design review and revised measures:
+`REVIEW.md`.
 
 ## 1. Data objects
 

@@ -1,5 +1,5 @@
-numpy
-scipy
-scikit-learn
-gudhi
-pytest
+numpy==2.5.3
+scipy==1.18.1
+scikit-learn==1.9.1
+gudhi==3.13.0
+pytest==9.1.1

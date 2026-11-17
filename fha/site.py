@@ -130,7 +130,7 @@ def main():
     if S:
         data["sequence"] = S
     if L:
-        data["lineup"] = {k: L[k] for k in L if k != "names"}
+        data["lineup"] = {"H6": L["H6"], "withdrawn": "ratings measure team strength (docs/REVIEW.md 3.5)"}
     data = plain(data)
     if D:
         data["defence"]["model"] = D["model"]   # full precision: the browser recomputes with these

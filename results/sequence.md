@@ -34,6 +34,8 @@ Possessions alive after three on-ball actions: 107375 training, 107158 test; sho
 
 **H4.** Registered threshold: improvement of at least 0.00169. Does not hold: no demonstrated value of player-set information.
 
+**Review (3.3).** Player indicators, which identify the team, add nothing to context alone (model 1 against 0), and adding the player blocks to VAEP makes the fit worse under one shared penalty. The instrument has no demonstrated sensitivity, so this result supports no conclusion about players.
+
 ## Calibration of the full rival (model 4), deciles
 
 | Mean predicted | Observed |

@@ -66,3 +66,16 @@ shape holds (H1, 80 teams); across seasons these few pairs do not show it.
 - The 2018 World Cup is in both sources. For the 8 teams measured in both, the rank agreement is 0.94 for players
   needed to cover every chance and 0.62 for the top-two share.
 - One StatsBomb 360 file (match 3845506) does not parse at the pinned commit; the defence stage skips and lists it.
+
+## P5. Design review (16 November 2026)
+
+`docs/REVIEW.md` audits the committed results (`python -m fha.audit`). It changes no registered verdict and qualifies
+their reading:
+
+- H1: a null that keeps each player's number of chances reproduces most of the split-half correlation of `tau`; the
+  excess over it repeats at 0.13 (−0.10 to 0.33).
+- H2: ranking players by chances involved in covers 0.951 of held-out xG against 0.944 for the transversal.
+- P3 is not interpretable: 16 of the 38 pairs are Barcelona and seasons hold 7 to 38 matches, on a measure that rises
+  with matches.
+- H6: 87% of rating variance lies between teams; the ratings table is withdrawn from the site and the results page.
+- The 2015/16 cohort is spent for confirmation; further tests on it are exploratory.

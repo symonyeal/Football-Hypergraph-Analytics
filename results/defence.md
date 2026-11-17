@@ -32,6 +32,8 @@ Passes: 40334 training, 19307 test. Box-entry rate: 0.217 training, 0.220 test.
 
 **H5b: h1 over gap and hole.** Change in log loss -0.0000 (-0.0001 to 0.0000): not resolved (interval contains 0) — registered expectation is 'not resolved'.
 
+**Review (D9).** Against ball position, entered linearly, gap and hole improve log loss by 0.0005, 0.8% of the gain from ball position itself (0.066). H5b's interval containing 0 shows no topological signal, but `h1` is nearly a function of the circumradii in `hole`, so the test could not have shown one.
+
 ## How box-entry rate changes with each measure
 
 All passes, quartiles of the measure.

@@ -74,7 +74,7 @@ const S = {
 const MEASURE = {
   top2: { label: "Share of danger involving the top two players", fmt: (v) => pct(v), get: (t) => t.top2, high: "more concentrated" },
   tau: { label: "Players needed so every chance involves one of them", fmt: (v) => String(v), get: (t) => t.tau, high: "more spread" },
-  nu: { label: "Chances with no player in common (separate routes)", fmt: (v) => String(v), get: (t) => t.nu, high: "more separate routes" },
+  nu: { label: "Most chances with no player in common", fmt: (v) => String(v), get: (t) => t.nu, high: "more chances sharing no player" },
 };
 
 function pass(t) {
@@ -86,7 +86,6 @@ function pass(t) {
   return true;
 }
 const pool = () => TS.filter(pass);
-function share(t, k, P) { const v = P.map(MEASURE[k].get), x = MEASURE[k].get(t); return v.filter((y) => y < x).length / Math.max(1, v.length - 1); }
 
 // ------------------------------------------------------------------ filters
 function drawFilters() {
@@ -136,24 +135,29 @@ function toggleTeam(i) {
   teamList(); drawTeams();
 }
 
-function sentence(t, P) {
-  const two = t.cov["2"][1].map(name).join(" and "), n = Math.max(1, P.length - 1);
-  const frac = (f) => pct(P.filter((u) => u !== t && f(u)).length / n);
-  return [`${two} were involved in ${pct(t.top2)} of the danger. ${frac((u) => u.top2 < t.top2)} of the team-seasons shown depend less on their top two.`,
-    `Every chance involved at least one of ${t.tau} players; ${frac((u) => u.tau > t.tau)} of team-seasons need more players to cover all their chances.`,
-    `${t.nu} chances had no player in common (separate routes); ${frac((u) => u.nu < t.nu)} of team-seasons have fewer.`,
+// tau and nu rise with matches and chances observed, so a team is compared only with the teams of its own
+// competition-season (docs/REVIEW.md, D1)
+const peers = (t) => TS.filter((u) => u.key === t.key && u !== t);
+
+function sentence(t) {
+  const two = t.cov["2"][1].map(name).join(" and "), P = peers(t);
+  const k = (f) => P.filter(f).length;
+  const out = [`${two} were involved in ${pct(t.top2)} of the danger.`,
+    `Every chance involved at least one of ${t.tau} players; ${t.nu} chances had no player in common.`,
     `${t.matches} matches, ${t.m} chances, ${fx(t.xg_per_match, 2)} open-play xG a match.`];
+  if (P.length >= 3) out.splice(2, 0, `Of the other ${P.length} teams in ${t.comp} ${t.season}, ${k((u) => u.top2 < t.top2)} depend less on their top two and ${k((u) => u.tau > t.tau)} need more players to cover every chance.`);
+  return out;
 }
 
 function drawTeams() {
-  const P = pool(), sel = S.teams.map((i) => TS[i]);
+  const sel = S.teams.map((i) => TS[i]);
   const cards = $("team-cards");
   cards.replaceChildren();
   if (!sel.length) cards.append(make("p", "empty", "Pick a team-season from the list to see how its attack works."));
   sel.forEach((t, k) => {
     const c = make("div", "card"); c.style.setProperty("--c", SLOT[k]);
     const b = make("button", "cardh", t.label); b.onclick = () => { S.focus = t.i; drawTeams(); };
-    c.append(b, ...sentence(t, P).map((s) => make("p", null, s)));
+    c.append(b, ...sentence(t).map((s) => make("p", null, s)));
     cards.append(c);
   });
   // coverage curve
@@ -163,19 +167,20 @@ function drawTeams() {
     customdata: B.map((b) => t.cov[b][1].map(name).join(", ")), hovertemplate: `<b>%{y:.0%}</b> ${t.team}<br>%{customdata}<extra></extra>`,
   }]), { showlegend: sel.length > 0, legend: { orientation: "h", y: 1.15, x: 0 }, margin: { t: 48, r: 24, b: 52, l: 60 },
     xaxis: { title: { text: "number of players" }, dtick: 1, range: [0.8, 5.2] }, yaxis: { title: { text: "share of the team's danger they were involved in" }, tickformat: ".0%", range: [0, 1.02] } });
-  // strips: every team-season in the filter, selected ones coloured and labelled
+  // strips: the focused team's competition-season, selected teams from it coloured and labelled
+  const fo = TS[S.focus], Q = fo ? TS.filter((u) => u.key === fo.key) : [], sq = sel.filter((t) => fo && t.key === fo.key);
   for (const k of ["top2", "tau", "nu"]) {
     const M = MEASURE[k], jit = (t) => ((t.i * 37) % 11) / 11 - 0.5;
     plot(`strip-${k}`, [
-      { x: P.map(M.get), y: P.map(jit), mode: "markers", marker: { color: T.context, size: 7, opacity: 0.6 }, text: P.map((t) => t.label),
+      { x: Q.map(M.get), y: Q.map(jit), mode: "markers", marker: { color: T.context, size: 7, opacity: 0.6 }, text: Q.map((t) => t.label),
         hovertemplate: `<b>%{x}</b> %{text}<extra></extra>` },
-      ...sel.map((t, j) => ({ x: [M.get(t)], y: [jit(t)], mode: "markers+text", text: [`${t.team} ${t.season}`], textposition: j % 2 ? "bottom center" : "top center",
-        textfont: { color: T.text, size: 12 }, marker: { color: SLOT[j], size: 14, line: { color: T.bg, width: 2 } },
+      ...sq.map((t) => ({ x: [M.get(t)], y: [jit(t)], mode: "markers+text", text: [t.team], textposition: sel.indexOf(t) % 2 ? "bottom center" : "top center",
+        textfont: { color: T.text, size: 12 }, marker: { color: SLOT[sel.indexOf(t)], size: 14, line: { color: T.bg, width: 2 } },
         hovertemplate: `<b>${M.fmt(M.get(t))}</b> ${t.label}<extra></extra>`, cliponaxis: false })),
     ], { height: 130, margin: { t: 24, r: 16, b: 40, l: 16 }, xaxis: { title: { text: M.label }, ...(k === "top2" ? { tickformat: ".0%" } : { dtick: 1 }) },
       yaxis: { visible: false, range: [-0.9, 1.1] } });
   }
-  $("strip-h").textContent = `Where the selected teams sit among the ${P.length} team-seasons shown`;
+  $("strip-h").textContent = fo ? `Where ${fo.team} sits among the ${Q.length} teams measured in ${fo.comp} ${fo.season}` : "Where the selected teams sit";
   drawHistory(sel);
   // combinations of the focused team-season
   const f = TS[S.focus];
@@ -210,7 +215,8 @@ function drawHistory(sel) {
     yaxis: { title: { text: M.label }, tickformat: S.measure === "top2" ? ".0%" : "d" } });
   const n = tr.reduce((s, t) => s + t.x.length, 0);
   $("history-note").textContent = !sel.length ? "Pick a team to see its history." : n === tr.length
-    ? "The open data holds only one measured season for these teams." : "Each point is one season or tournament in which the team played at least 5 matches.";
+    ? "The open data holds only one measured season for these teams." : "Each point is one season or tournament in which the team played at least 5 matches. " +
+      "Players needed and chances sharing no player rise with the number of matches, so across seasons of different length only the top-two share compares.";
 }
 
 // ------------------------------------------------------------------ players
@@ -277,17 +283,6 @@ function drawPlayers() {
     text: top.map(([, x]) => pct(x / f.x)), textposition: "outside", cliponaxis: false, hovertemplate: "<b>%{x:.0%}</b> of the chances also involved %{y}<extra></extra>" }],
   { height: Math.max(160, 34 * top.length + 60), margin: { t: 8, r: 64, b: 44, l: 16 }, xaxis: { tickformat: ".0%", range: [0, 1], title: { text: "share of the player's danger shared with this teammate" } },
     yaxis: { autorange: "reversed", automargin: true } });
-  // ratings (2015/16 leagues only)
-  const R = (D.lineup && D.lineup.ratings) || {}, tb = $("player-ratings");
-  tb.replaceChildren();
-  const h = tb.insertRow();
-  for (const c of ["Player", "First half (xG/90)", "Second half (xG/90)", "Minutes"]) h.append(make("th", null, c));
-  for (const e of sel) {
-    const r = R[String(e.p)], row = tb.insertRow();
-    row.insertCell().textContent = e.nm;
-    if (r) for (const v of [fx(r[0], 3), fx(r[1], 3), `${Math.round(r[2])} + ${Math.round(r[3])}`]) { const c = row.insertCell(); c.textContent = v; c.className = "num"; }
-    else { const c = row.insertCell(); c.colSpan = 3; c.textContent = "Not rated: ratings exist only for 2015/16 league players with enough minutes on and off."; c.className = "note"; }
-  }
 }
 
 // ------------------------------------------------------------------ defence
@@ -449,7 +444,7 @@ function drawDefComp() {
 
 // ------------------------------------------------------------------ findings
 const A = D.attack;
-const HM = { tau: ["Players needed so every chance involves one of them", "d"], nu: ["Separate routes (chances with no player in common)", "d"], top2: ["Share of danger involving the top two", ".0%"] };
+const HM = { tau: ["Players needed so every chance involves one of them", "d"], nu: ["Most chances with no player in common", "d"], top2: ["Share of danger involving the top two", ".0%"] };
 
 function drawStable() {
   const rows = A.halves, k = S.metric, f = HM[k];
@@ -462,7 +457,9 @@ function drawStable() {
       customdata: rows.map((r) => [r.train[k], r.test[k]]), hovertemplate: `<b>%{customdata[0]${k === "top2" ? ":.0%" : ""}} → %{customdata[1]${k === "top2" ? ":.0%" : ""}}</b><br>%{text}<extra></extra>` },
   ], { xaxis: { title: { text: `${f[0]}, first half of 2015/16` }, tickformat: f[1] }, yaxis: { title: { text: "second half" }, tickformat: f[1] } });
   const r = A.H1[{ tau: "tau", nu: "nu", top2: "cov2" }[k]];
-  $("stable-take").textContent = `Correlation between the two halves: ${fx(r[0])} (95% interval ${ci(r)}), 80 teams. It is a property of the team, not chance.`;
+  $("stable-take").textContent = `Correlation between the two halves: ${fx(r[0])} (95% interval ${ci(r)}), 80 teams. ` +
+    "Re-dealing each team's chances among its players, with every player's number of chances fixed, reproduces most of this: that baseline repeats at 0.55, " +
+    "and the part of players-needed beyond it at 0.13 (−0.10 to 0.33). What repeats is how many players a team uses and how evenly.";
   const P = D.s2s[k];
   plot("s2s-chart", [
     { x: [Math.min(...P.pairs.map((p) => p[2])), Math.max(...P.pairs.map((p) => p[2]))], y: [Math.min(...P.pairs.map((p) => p[2])), Math.max(...P.pairs.map((p) => p[2]))], mode: "lines", line: { color: T.context, width: 1, dash: "dot" }, hoverinfo: "skip" },
@@ -471,20 +468,20 @@ function drawStable() {
       customdata: P.pairs.map((p) => [p[2], p[3]]), hovertemplate: `<b>%{customdata[0]${k === "top2" ? ":.0%" : ""}} → %{customdata[1]${k === "top2" ? ":.0%" : ""}}</b><br>%{text}<extra></extra>` },
   ], { xaxis: { title: { text: `${f[0]}, one season` }, tickformat: f[1] }, yaxis: { title: { text: "the team's next season" }, tickformat: f[1] } });
   const up = P.rho && P.rho[1][0] > 0, down = P.rho && P.rho[1][1] < 0;
-  $("s2s-h").textContent = up ? "From one season to the next, the pattern also carries over"
-    : down ? "From one season to the next, the pattern reverses" : "From one season to the next, the pattern does not clearly carry over";
-  $("s2s-take").textContent = P.rho ? `Correlation from one season to the next: ${fx(P.rho[0])} (95% interval ${ci(P.rho)}), ${P.pairs.length} pairs of consecutive seasons in ${P.comps.join(", ")}` +
-      (up || down ? "." : ": not distinguishable from no relation. Within a season the shape holds (above); across a summer of transfers and coaching changes, these few pairs do not show it.")
-    : `${P.pairs.length} pairs: too few for a correlation.`;
+  $("s2s-h").textContent = "From one season to the next: not interpretable";
+  $("s2s-take").textContent = (P.rho ? `Correlation from one season to the next: ${fx(P.rho[0])} (95% interval ${ci(P.rho)}), ${P.pairs.length} pairs of consecutive seasons in ${P.comps.join(", ")}. `
+    : `${P.pairs.length} pairs: too few for a correlation. `) +
+    "Most pairs are one club (Barcelona) or one league, from seasons of 7 to 38 matches, and players needed rises with matches played; the pairs are not independent.";
 }
 
 function drawMissing() {
   const h = A.H3.bottleneck, rows = h.teams, nu = Object.fromEntries(A.halves.map((r) => [r.team, r.train.nu]));
   plot("missing-chart", [{ x: rows.map((r) => nu[r[0]]), y: rows.map((r) => r[4]), mode: "markers", marker: { color: T.accent, size: 10, line: { color: T.bg, width: 2 } },
     text: rows.map((r) => `${r[0]}: ${name(r[5]) || r[1]} missed ${r[2]}, started ${r[3]}`), hovertemplate: "<b>%{y:.0%} less xG</b><br>%{text}<extra></extra>" }],
-  { xaxis: { title: { text: "separate routes in the first half" } }, yaxis: { title: { text: "drop in xG when the player was missing" }, tickformat: ".0%" } });
+  { xaxis: { title: { text: "chances sharing no player, first half" } }, yaxis: { title: { text: "drop in xG when the player was missing" }, tickformat: ".0%" } });
   const r = h.rho_nu;
-  $("missing-take").textContent = r ? `Correlation ${fx(r[0])} (95% interval ${ci(r)}), ${rows.length} teams: the expected direction, but not resolved.` : "";
+  $("missing-take").textContent = r ? `Correlation ${fx(r[0])} (95% interval ${ci(r)}), ${rows.length} teams: the expected direction, but not resolved. ` +
+    `With ${rows.length} teams the test could detect only a correlation near 0.5, and the key player is often one of several tied players.` : "";
 }
 
 function drawSequence() {
@@ -496,8 +493,9 @@ function drawSequence() {
     error_x: { type: "data", symmetric: false, array: rows.map((r) => 1000 * (q[r[1]][0] - q[r[1]][1][0])), arrayminus: rows.map((r) => 1000 * (q[r[1]][1][1] - q[r[1]][0])), color: T.muted },
     hovertemplate: "<b>%{x:.2f}</b><br>%{y}<extra></extra>" }],
   { height: 300, margin: { t: 8, r: 24, b: 52, l: 16 }, xaxis: { title: { text: "improvement in predicting a shot (log loss ×1000, second half); bars cross 0 = no help" }, zeroline: true }, yaxis: { autorange: "reversed", automargin: true } });
-  $("seq-h").textContent = q.H4.holds ? "Who is on the ball predicts a shot beyond what they do" : "What happens and where predicts a shot; who is on the ball adds nothing";
-  $("seq-note").textContent = `${(q.n.train + q.n.test).toLocaleString()} possessions still alive after three on-ball actions, 2015/16; ${pct(q.rate.test, 1)} went on to an open-play shot.`;
+  $("seq-h").textContent = q.H4.holds ? "Who is on the ball predicts a shot beyond what they do" : "What happens and where predicts a shot; the test of who is on the ball is inconclusive";
+  $("seq-note").textContent = `${(q.n.train + q.n.test).toLocaleString()} possessions still alive after three on-ball actions, 2015/16; ${pct(q.rate.test, 1)} went on to an open-play shot. ` +
+    "Player indicators, which identify the team, also add nothing to context alone, so the test had no demonstrated sensitivity and says nothing either way about players.";
 }
 
 function drawProviders() {
@@ -510,7 +508,8 @@ function drawProviders() {
       hovertemplate: "<b>%{x:.0%} vs %{y:.0%}</b><br>%{text}<extra></extra>" }],
   { xaxis: { title: { text: "top-two share, StatsBomb data" }, tickformat: ".0%" }, yaxis: { title: { text: "top-two share, Wyscout data" }, tickformat: ".0%" } });
   const chk = Object.entries(W.xg_check).map(([k, c]) => `${COMP[k].competition} ${COMP[k].season}: ${Math.round(c.predicted)} predicted vs ${c.open_play_goals} goals`).join("; ");
-  $("prov-take").textContent = `${P.rows.length} national teams measured in both sources at the 2018 World Cup. Rank agreement: top-two share ${fx(P.rho_top2)}, players needed ${fx(P.rho_tau)}. ` +
+  $("prov-take").textContent = `${P.rows.length} national teams measured in both sources at the 2018 World Cup. Rank agreement: top-two share ${fx(P.rho_top2)}, players needed ${fx(P.rho_tau)}; ` +
+    "players needed tracks how many matches a team played (5 or 7) in both sources, so the top-two share is the informative comparison. " +
     `Wyscout has no xG, so its chances are weighted by a model fitted on ${W.xg_model.shots.toLocaleString()} StatsBomb shots (distance, angle, header). Its goal totals: ${chk}. ` +
     "A uniform under- or over-estimate leaves every share and the player counts unchanged; only xG per match is affected.";
 }
@@ -519,8 +518,8 @@ function drawProviders() {
 function redraw() { drawFilters(); teamList(); drawTeams(); playerList(); drawPlayers(); if (DF) drawDefComp(); }
 
 function facts() {
-  const F = [[String(TS.length), `team-seasons measured across ${D.seasons.competitions.filter((c) => c.measured).length} competitions and seasons, from two data providers`], [fx(A.H1.tau[0]), "how strongly a team's attacking shape repeats between half-seasons"],
-    ["+" + fx(100 * A.H2.T_minus_U[0], 1) + " pts", "more later danger found by the chance-based player sets than by touches"]];
+  const F = [[String(TS.length), `team-seasons measured across ${D.seasons.competitions.filter((c) => c.measured).length} competitions and seasons, from two data providers`], ["0.13", "how strongly players-needed repeats between half-seasons beyond what each player's number of chances explains"],
+    ["95%", "of second-half danger involves the first half's most-involved players, as much as the transversal set finds (94%)"]];
   if (DF) F.push([pct(DF.rate.test), "of opponent-half passes reach the box within 10 s"]);
   $("facts").replaceChildren(...F.map(([v, l]) => { const d = make("div"); d.append(make("b", null, v), make("span", null, l)); return d; }));
 }

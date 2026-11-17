@@ -8,6 +8,7 @@ Legend: W window ('train' weeks 1-19 or 'test' 20-38), F family of attacking gro
 """
 
 import json
+import platform
 import sys
 import time
 import urllib.request
@@ -15,6 +16,8 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 import numpy as np
+import scipy
+import sklearn
 from scipy.stats import spearmanr
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import log_loss
@@ -626,8 +629,10 @@ if __name__ == "__main__":
     limit = int(a[a.index("--limit") + 1]) if "--limit" in a else None
     OUT.mkdir(exist_ok=True)
     stages = {"attack": stage_attack, "defence": stage_defence, "sequence": stage_sequence, "lineup": stage_lineup, "seasons": stage_seasons, "wyscout": stage_wyscout}
+    versions = {"python": platform.python_version(), "numpy": np.__version__, "scipy (HiGHS)": scipy.__version__,
+                "scikit-learn": sklearn.__version__, "mcs": "symonyeal/Minimal-Metabolic-Interventions@a807469"}
     for s in [x for x in a if x in stages]:
-        r = stages[s](limit)
+        r = {**stages[s](limit), "versions": versions}
         name = f"{s}{'-smoke' if limit else ''}.json"
         (OUT / name).write_text(json.dumps(r, indent=1, default=str, ensure_ascii=False), encoding="utf-8")
         print(s, "written", OUT / name)

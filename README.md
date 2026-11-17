@@ -2,65 +2,74 @@
 
 **Interactive site: https://symonyeal.github.io/Football-Hypergraph-Analytics/**
 
-Which players does a team's attack run through, how many separate routes to a shot does it have, and what does a
-defence look like just before it is broken? This project answers those questions for 403 team-seasons from two public
-data sets: StatsBomb open data (complete 2015/16 Premier League, La Liga, Serie A and Ligue 1; four Women's Super
-League seasons and other women's leagues; World Cups, Euros, Copa América 2024, AFCON 2023; Barcelona's La Liga
-matches 2004/05 to 2020/21; 360 freeze frames for eleven competitions) and the Wyscout public data set (complete
-2017/18 Premier League, La Liga, Bundesliga, Serie A and Ligue 1, the 2018 World Cup and Euro 2016). Every test was written down before the data was opened ([registered hypotheses](docs/HYPOTHESES.md)); what
-was noticed afterwards is kept apart ([post hoc notes](docs/POSTHOC.md)).
+Does the group structure of chance creation carry information about a team that is reproducible, absent from how
+often each player is involved, and related to an outcome outside the structure itself? This project asks that question
+of 403 team-seasons from two public data sets: StatsBomb open data (complete 2015/16 Premier League, La Liga, Serie A
+and Ligue 1; four Women's Super League seasons and other women's leagues; World Cups, Euros, Copa América 2024, AFCON
+2023; Barcelona's La Liga matches 2004/05 to 2020/21; 360 freeze frames for eleven competitions) and the Wyscout public
+data set (complete 2017/18 Premier League, La Liga, Bundesliga, Serie A and Ligue 1, the 2018 World Cup and Euro 2016).
 
-**Under review.** A [design review](docs/REVIEW.md) of 16 November 2026 qualifies several findings below: the attack
-measures rise with matches played and are largely reproduced by how often each player is involved in chances, and the
-transversal sets do no better than ranking players by that count. Its section 6 lists the statements to correct;
-`python -m fha.audit` reproduces its numbers.
+**Current answer.** Reproducible weakly; not distinguishable from involvement counts; the link to outcomes is
+untested. The first round of tests ([registered hypotheses](docs/HYPOTHESES.md), [post hoc notes](docs/POSTHOC.md))
+was reviewed on 16 November 2026 ([design review](docs/REVIEW.md); `python -m fha.audit` reproduces its numbers). The
+review found that the first round's measures rise with the number of chances observed and are largely reproduced by
+how often each player is involved. Its revised design is being carried out: new measures, null models, and a
+confirmation run on the Wyscout 2017/18 leagues, which no split-half or model test has yet touched.
 
 ## What a chance is
 
 A chance is any possession that ends in an open-play shot, and the people behind it are the last three players
 involved before the shot. A team's half-season of chances is then a list of small groups of players, each with the
-expected goals (xG) it produced. Three numbers describe that list:
+expected goals (xG) it produced. The first round summarised that list by three numbers:
 
-- **Fewest players touching every chance.** If two players took part in every chance, the attack runs through them.
-  Most teams need nine or ten; Barcelona needed seven.
-- **Chances sharing no player.** The largest number of chances with no player in common: separate routes to goal.
-  Stopping all of them would take at least that many players.
-- **Share of danger two players touch.** Barcelona's Neymar and Suárez were involved in 87% of the team's open-play
-  xG in the first half of the season; the typical team's best pair touches about 70%.
+- **Fewest players touching every chance** ($\tau$). Most teams need nine or ten in a half-season; Barcelona needed
+  seven. The count rises with the number of chances observed (mean 5.3 at 25 chances, 8.6 at 130), so it compares
+  teams only over equal numbers of chances or within one competition.
+- **Chances sharing no player** ($\nu$). The largest number of chances with no player in common. It is within one of
+  $\tau$ in 360 of 403 team-seasons, so the two are close to one measurement.
+- **Share of danger two players touch** ($\operatorname{cov}(2)$). Barcelona's Neymar and Suárez were involved in
+  87% of the team's open-play xG in the first half of 2015/16; the typical team's best pair touches about 70%.
+
+Each counts involvement in chances that happened. None measures how much danger would be removed if those players
+were marked or missing: a marked team re-routes.
 
 ## What was found
 
-**A team's attack has a shape that lasts the season.** All three numbers in the first half of the season predict the
-second half (correlation 0.42 to 0.48 across the 80 teams; every 95% interval is above zero).
+Registered tests on the 80 teams of the 2015/16 leagues, first half of the season against the second, with the
+review's qualifications (exploratory, computed on the same teams).
 
-**The players behind a team's chances can be picked out from the first half.** Choosing the fewest players who touched
-every first-half chance covers 94% of the team's second-half danger, against 89% for the same number of players with
-the most touches (difference 5.8 points, interval 4.2 to 7.4).
+**The three numbers repeat between half-seasons, but mostly through involvement counts.** Each correlates 0.42 to
+0.48 between halves (every 95% interval above zero). Re-dealing each team's chances among its players, keeping how
+many chances each player was in, reproduces most of this: that baseline repeats at 0.55, and the part of $\tau$ beyond
+it repeats at 0.13 (interval −0.10 to 0.33).
 
-**Teams with fewer separate routes did not clearly lose more when their key player was missing.** The direction is the
-one expected (correlation −0.25), but with 32 eligible teams the interval runs from −0.56 to 0.10. The "key player" is
-often one of several equally ranked players, which weakens the test.
+**The players behind a team's chances can be picked out from the first half, but simple counting does as well.**
+The fewest players who touched every first-half chance cover 94% of second-half danger. The same number of players
+ranked by how many chances they were involved in cover 95%; ranked by touches, 89%.
 
-**Within a season the shape holds; from one season to the next it does not clearly carry over.** Across 38 pairs of
-consecutive seasons (Women's Super League, Barcelona, Paris Saint-Germain) the correlations run from −0.31 to 0.34 and
-none is distinguishable from zero. Squads and coaches change over a summer.
+**Teams with fewer chances sharing no player did not clearly lose more when their key player was missing.** Correlation
+−0.25, interval −0.56 to 0.10, 32 teams. With 32 teams the test could detect only a correlation near 0.5, and the
+"key player" is often one of several tied players.
 
-**The two data providers agree on the same teams.** Eight teams at the 2018 World Cup are measured in both sources;
-their ranking by players needed to cover every chance agrees at 0.94.
+**Season-to-season comparisons cannot be read.** Of 38 pairs of consecutive seasons, 16 are Barcelona and 21 the
+Women's Super League, with seasons of 7 to 38 matches; the correlations (−0.31 to 0.34) are not interpretable.
 
-**Who is on the ball adds nothing to predicting a shot beyond what they do and where.** For 214,000 possessions that
-were still alive after three actions, describing the actions (type, location, movement) improves predictions clearly;
-adding which players were involved, or which group of players, does not.
+**The two data providers agree mainly on how many matches a team played.** Eight teams at the 2018 World Cup are in
+both sources. Their $\tau$ agrees at 0.94, but each provider's $\tau$ also tracks matches played (0.80 and 0.83).
+Agreement on the top-two share is 0.62.
 
-**Where the ball is decides most box entries; gaps in a defence add a little, and topology adds nothing.** For 60,000
-passes, the ball's position carries most of the information. A wider gap between neighbouring defenders and a larger
-empty circle inside the block add a small, measurable amount. A topological summary of the defenders adds nothing
-beyond those two. Raw rates point the other way, because big holes appear in stretched defences far from goal: hold the
-ball position fixed and a bigger hole helps the attack.
+## Appendix: defence, sequence and lineup studies
 
-**Player ratings repeat between halves, but mostly measure the team.** Ratings of 283 regulars correlate 0.52 between
-halves, yet the top of the list is almost entirely Paris Saint-Germain, Barcelona and Real Madrid players. With few
-substitutions in football, a strong team's results are shared among its regulars.
+These studies do not address the question above and are kept as registered, with their limits.
+
+- **Who is on the ball (sequence, H4).** Adding the players involved to a model of 214,000 possessions did not improve
+  predictions of a shot. The same test also gains nothing from player indicators, which identify the team, so it had
+  no demonstrated sensitivity and supports no conclusion about players.
+- **Gaps in a defence (H5).** For 60,000 passes from 360 frames, ball position carries most of the information. Gaps
+  and holes in the block improve test log loss by 0.0005, 0.8% of the gain from ball position, against a baseline
+  linear in location. The topological summary added nothing, but that test could not have found otherwise.
+- **Lineup ratings (H6).** Ratings of 283 regulars repeat between halves (0.52), but 87% of their variance lies between
+  teams and the fitted penalty sat at the edge of its grid. They measure team strength; the table is withdrawn.
 
 ## Data and terms
 

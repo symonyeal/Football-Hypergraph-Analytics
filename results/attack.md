@@ -10,10 +10,10 @@ Windows: training = match weeks 1–19 of 2015/16, test = weeks 20–38. Registe
 
 | Metric | What it counts | High value means | Low value means | It is not |
 | --- | --- | --- | --- | --- |
-| `tau` | Fewest players such that every dangerous attack (open-play shot possession) involved at least one of them, counting the last three players before the shot | Danger comes from many separate places; no small group is behind every chance | A few players are behind every chance | A rating of those players; marking them would not necessarily stop attacks |
+| `tau` | Fewest players such that every dangerous attack (open-play shot possession) involved at least one of them, counting the last three players before the shot | Danger comes from many places; no small group is behind every chance | A few players are behind every chance | Comparable across windows of different length: it rises with the number of chances. Nor a rating of those players, or the danger removed by marking them |
 | `tau*` | Fractional version of `tau`: the least total weight on players so that every attack carries weight at least 1 | As `tau` | As `tau` | — |
-| `nu` | Most dangerous attacks that share no player at all | Many fully separate routes to a shot; stopping all of them needs at least `nu` players | Attacks overlap in the same people | A count of attacks |
-| `cov(2)` | Largest share of the team's open-play xG in which at least one of two players took part | The attack depends on two players | Danger is spread | Those players' xG; involvement is any of the last three |
+| `nu` | Most dangerous attacks that share no player at all | Many chances with no player in common | Attacks overlap in the same people | Routes in any spatial or tactical sense; it is within 1 of `tau` in 360 of 403 team-seasons |
+| `cov(2)` | Largest share of the team's open-play xG in which at least one of two players took part | Two players took part in most of the danger | Danger is spread | Those players' xG, or the danger removed without them; involvement is any of the last three |
 | `x*` share | A player's part of one optimal fractional `tau*` | Read with care: the optimum is usually not unique, so several players tie (docs/POSTHOC.md P1) | — | Touches or usage |
 | `solo` | Share of xG from attacks where one player was the only one involved | Individual creation (dribble-and-shoot, loose-ball finishes) | Combination play | — |
 
@@ -28,6 +28,8 @@ Spearman correlation of each metric between the two half-seasons across teams, w
 | `nu` | 0.42 | 0.23 to 0.57 | holds | 0.27 (0.04 to 0.49) |
 | `cov2` | 0.43 | 0.22 to 0.61 | holds | — |
 
+**Review (docs/REVIEW.md, D5; post hoc).** Re-dealing each team's chances among its players with every player's number of chances fixed reproduces most of this: that null's mean repeats at 0.55 between halves, and the excess of `tau` over it at 0.13 (−0.10 to 0.33). The verdicts stand as registered; they do not show structure beyond involvement counts.
+
 ## H2. Do transversal sets find the key players better than usage?
 
 Share of test-period dangerous xG involving the chosen players. Each set has `tau` players, chosen on the training half.
@@ -40,9 +42,13 @@ Share of test-period dangerous xG involving the chosen players. Each set has `ta
 
 `C − U` = 0.052 (interval 0.035 to 0.071): holds. `T − U` = 0.058 (interval 0.042 to 0.074): holds.
 
-## H3. Do teams with fewer separate routes suffer more when their bottleneck player is missing?
+**Review (D3; post hoc).** The `tau` players ranked by the number of chances they were involved in cover 0.951 of held-out xG, the transversal 0.944 (difference −0.007, −0.019 to 0.003). On-ball actions are a weak baseline.
+
+## H3. Do teams with fewer disjoint chances suffer more when their bottleneck player is missing?
 
 Drop = 1 − (team xG relative to the opponent's usual concession, in matches the player missed) / (the same, in matches the player started). Observational: rotation and injury are not random.
+
+With 32 teams, 80% power needs a true correlation of about 0.48 (review 3.2).
 
 **Top `x*` player.** 32 eligible teams.
  Correlation of drop with training `nu`: -0.25 (-0.56 to 0.10), not resolved (interval contains 0); with `cov(2)`: 0.06 (-0.32 to 0.41), not resolved (interval contains 0).

@@ -28,10 +28,10 @@ def f(x, d=2):
 
 ATTACK_GLOSSARY = """| Metric | What it counts | High value means | Low value means | It is not |
 | --- | --- | --- | --- | --- |
-| `tau` | Fewest players such that every dangerous attack (open-play shot possession) involved at least one of them, counting the last three players before the shot | Danger comes from many separate places; no small group is behind every chance | A few players are behind every chance | A rating of those players; marking them would not necessarily stop attacks |
+| `tau` | Fewest players such that every dangerous attack (open-play shot possession) involved at least one of them, counting the last three players before the shot | Danger comes from many places; no small group is behind every chance | A few players are behind every chance | Comparable across windows of different length: it rises with the number of chances. Nor a rating of those players, or the danger removed by marking them |
 | `tau*` | Fractional version of `tau`: the least total weight on players so that every attack carries weight at least 1 | As `tau` | As `tau` | — |
-| `nu` | Most dangerous attacks that share no player at all | Many fully separate routes to a shot; stopping all of them needs at least `nu` players | Attacks overlap in the same people | A count of attacks |
-| `cov(2)` | Largest share of the team's open-play xG in which at least one of two players took part | The attack depends on two players | Danger is spread | Those players' xG; involvement is any of the last three |
+| `nu` | Most dangerous attacks that share no player at all | Many chances with no player in common | Attacks overlap in the same people | Routes in any spatial or tactical sense; it is within 1 of `tau` in 360 of 403 team-seasons |
+| `cov(2)` | Largest share of the team's open-play xG in which at least one of two players took part | Two players took part in most of the danger | Danger is spread | Those players' xG, or the danger removed without them; involvement is any of the last three |
 | `x*` share | A player's part of one optimal fractional `tau*` | Read with care: the optimum is usually not unique, so several players tie (docs/POSTHOC.md P1) | — | Touches or usage |
 | `solo` | Share of xG from attacks where one player was the only one involved | Individual creation (dribble-and-shoot, loose-ball finishes) | Combination play | — |
 """
@@ -51,6 +51,9 @@ def attack():
         v, ci = r["H1"][k]
         s = r["sensitivity_q0.1"].get(k)
         L.append(f"| `{k}` | {f(v)} | {f(ci[0])} to {f(ci[1])} | {verdict(ci)} | {f(s[0]) + ' (' + f(s[1][0]) + ' to ' + f(s[1][1]) + ')' if s else '—'} |")
+    L += ["", "**Review (docs/REVIEW.md, D5; post hoc).** Re-dealing each team's chances among its players with every player's number "
+          "of chances fixed reproduces most of this: that null's mean repeats at 0.55 between halves, and the excess of `tau` over it "
+          "at 0.13 (−0.10 to 0.33). The verdicts stand as registered; they do not show structure beyond involvement counts."]
     h2 = r["H2"]
     L += ["", "## H2. Do transversal sets find the key players better than usage?", "",
           "Share of test-period dangerous xG involving the chosen players. Each set has `tau` players, chosen on the training half.", "",
@@ -60,9 +63,12 @@ def attack():
           f"| Most on-ball actions `U` | {f(h2['mean_coverage']['U'])} |", "",
           f"`C − U` = {f(h2['C_minus_U'][0], 3)} (interval {f(h2['C_minus_U'][1][0], 3)} to {f(h2['C_minus_U'][1][1], 3)}): {verdict(h2['C_minus_U'][1])}. "
           f"`T − U` = {f(h2['T_minus_U'][0], 3)} (interval {f(h2['T_minus_U'][1][0], 3)} to {f(h2['T_minus_U'][1][1], 3)}): {verdict(h2['T_minus_U'][1])}.", "",
-          "## H3. Do teams with fewer separate routes suffer more when their bottleneck player is missing?", "",
+          "**Review (D3; post hoc).** The `tau` players ranked by the number of chances they were involved in cover 0.951 of held-out xG, "
+          "the transversal 0.944 (difference −0.007, −0.019 to 0.003). On-ball actions are a weak baseline.", "",
+          "## H3. Do teams with fewer disjoint chances suffer more when their bottleneck player is missing?", "",
           "Drop = 1 − (team xG relative to the opponent's usual concession, in matches the player missed) / (the same, in matches the player started). "
           "Observational: rotation and injury are not random.", ""]
+    L += ["With 32 teams, 80% power needs a true correlation of about 0.48 (review 3.2).", ""]
     for key, lab in (("bottleneck", "Top `x*` player"), ("usage", "Top usage player")):
         h = r["H3"][key]
         L.append(f"**{lab}.** {len(h['teams'])} eligible teams.")
@@ -115,6 +121,9 @@ def defence():
         d, ci = r[k]
         L.append(f"\n**{lab}.** Change in log loss {f(d, 4)} ({f(ci[0], 4)} to {f(ci[1], 4)}): {verdict(ci, want)}"
                  + (" — registered expectation is 'not resolved'." if k.startswith("H5b") else "."))
+    L += ["", "**Review (D9).** Against ball position, entered linearly, gap and hole improve log loss by 0.0005, 0.8% of the gain from "
+          "ball position itself (0.066). H5b's interval containing 0 shows no topological signal, but `h1` is nearly a function of the "
+          "circumradii in `hole`, so the test could not have shown one."]
     L += ["", "## How box-entry rate changes with each measure", "", "All passes, quartiles of the measure.", "",
           "| Measure | Q1 range (m) | Q1 rate | Q2 rate | Q3 rate | Q4 rate | Q4 range (m) |", "| --- | --- | --- | --- | --- | --- | --- |"]
     for k in ("gap", "hole", "h1"):
@@ -157,6 +166,9 @@ def sequence():
     L += ["", f"**H4.** Registered threshold: improvement of at least {f(h['threshold'], 5)}. "
           + ("Holds: the set of players carries information beyond the actions." if h["holds"] else
              "Does not hold: no demonstrated value of player-set information."), "",
+          "**Review (3.3).** Player indicators, which identify the team, add nothing to context alone (model 1 against 0), and adding the "
+          "player blocks to VAEP makes the fit worse under one shared penalty. The instrument has no demonstrated sensitivity, so this "
+          "result supports no conclusion about players.", "",
           "## Calibration of the full rival (model 4), deciles", "", "| Mean predicted | Observed |", "| --- | --- |"]
     L += [f"| {f(a, 3)} | {f(b, 3)} |" for a, b in r["calibration"]["4"]]
     (R / "sequence.md").write_text("\n".join(L) + "\n", encoding="utf-8")
@@ -176,11 +188,9 @@ def lineup():
     if "H6" in r:
         v, ci = r["H6"]
         L.append(f"**H6.** Players eligible in both halves: {r['eligible_both']}. Split-half Spearman {f(v)} ({f(ci[0])} to {f(ci[1])}): {verdict(ci)}.")
-        if "top" in r:
-            L += ["", "| Highest rated | xG/90 | Lowest rated | xG/90 |", "| --- | --- | --- | --- |"]
-            L += [f"| {a} | {f(x, 3)} | {b} | {f(y, 3)} |" for (a, x), (b, y) in zip(r["top"], r["bottom"])]
-        else:
-            L.append("Ratings are not published: they do not repeat between halves.")
+        L += ["", "**Withdrawn (review 3.5).** 87% of the variance of the ratings lies between teams, and cross-validation chose the largest "
+              "penalty in both halves with error still falling. The split-half correlation measures the stability of team strength, so no "
+              "ratings table is published."]
     else:
         L.append(f"**H6.** Only {r['eligible_both']} players are eligible in both halves; the test was not run and no ratings are published.")
     (R / "lineup.md").write_text("\n".join(L) + "\n", encoding="utf-8")
