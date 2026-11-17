@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       stage:
-        description: "attack, defence, sequence, lineup, seasons, wyscout or structure"
+        description: "attack, defence, sequence, lineup, seasons, wyscout, structure or explore"
         required: true
       limit:
         description: "smoke test: matches per competition end (empty = full run)"

@@ -1,6 +1,6 @@
 """Registered tests H1-H3 and H5 (docs/HYPOTHESES.md) on StatsBomb open data, streamed at a pinned commit.
 
-Usage: python -m fha.run attack|defence|sequence|lineup|seasons|wyscout|structure [--limit N]   (writes results/<stage>.json; --limit is a smoke test)
+Usage: python -m fha.run attack|defence|sequence|lineup|seasons|wyscout|structure|explore [--limit N]   (writes results/<stage>.json; --limit is a smoke test)
 Raw data is never kept: it is held in memory, except one event file at a time in a temporary runner directory for
 socceraction (StatsBomb Public Data User Agreement 1.2.1).
 
@@ -26,7 +26,7 @@ from sklearn.metrics import log_loss
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
-from fha import attack, defence, mu, sb, wy
+from fha import attack, defence, mu, protocol, sb, wy
 
 SHA = "4b73468fc5b0f1950f9f66fada70ad3a4f9327cb"
 RAW = f"https://raw.githubusercontent.com/hudl/open-data/{SHA}/data"
@@ -62,10 +62,12 @@ def rho(a, b):
 # ---------------------------------------------------------------- attack (H1-H3)
 
 def collect(limit):
-    """Per team and window: attacking groups, usage, names, and each chance with its match and the members' roles;
-    per match: lineups and open-play xG."""
+    """Per team and window: attacking groups, usage, names; per match: lineups and open-play xG. X holds what the
+    review's stages add: each chance with its match and the members' roles, completed passes, and match results."""
     G = defaultdict(list)            # (team, W) -> [(A, xg)]
     C = defaultdict(list)            # (team, W) -> [(match, A, xg, {player: role})]
+    PP = defaultdict(Counter)        # (team, W) -> (passer, recipient) -> completed passes
+    res = []                         # (team, opp, W, home, open-play xG, goals for, goals against, appeared set)
     U = defaultdict(Counter)         # (team, W) -> player -> on-ball actions
     names, league = {}, {}
     games = []                       # (team, opp, W, xg, started set, appeared set)
@@ -90,12 +92,16 @@ def collect(limit):
                     U[(e["team"]["id"], W)][e["player"]["id"]] += 1
                 if sb.openplay(e):
                     xg[e["team"]["id"]] += e["shot"]["statsbomb_xg"]
+                if e["type"]["name"] == "Pass" and "recipient" in e["pass"] and "outcome" not in e["pass"]:
+                    PP[(e["team"]["id"], W)][(e["player"]["id"], e["pass"]["recipient"]["id"])] += 1
+            score = {h: m["home_score"], a: m["away_score"]}
             for t in lu:
                 st = {p["player_id"] for p in t["lineup"] if any(q["start_reason"] == "Starting XI" for q in p["positions"])}
                 ap = {p["player_id"] for p in t["lineup"] if p["positions"]}
                 o = a if t["team_id"] == h else h
                 games.append((t["team_id"], o, W, xg[t["team_id"]], st, ap))
-    return G, U, names, league, games, C
+                res.append((t["team_id"], o, W, int(t["team_id"] == h), xg[t["team_id"]], score[t["team_id"]], score[o], ap))
+    return G, U, names, league, games, {"chances": C, "passes": PP, "results": res}
 
 
 def measures(Fw, U):
@@ -581,7 +587,8 @@ def stage_structure(limit=None):
     """Exploration cohort (2015/16 leagues, review 4.5): functionals of the chance measure for the two half-seasons
     and the full season, at player and role level, with standard errors and null distributions; exploratory
     reliability (R1) and pooled excess over each null (R2). This cohort is spent for confirmation."""
-    _, _, names, league, _, C = collect(limit)
+    _, _, names, league, _, X = collect(limit)
+    C = X["chances"]
     teams = sorted({t for t, W in C if (t, "train") in C and (t, "test") in C})
     rows = {(t, W): C[(t, W)] for t in teams for W in ("train", "test")}
     rows.update({(t, "season"): C[(t, "train")] + C[(t, "test")] for t in teams})
@@ -622,6 +629,66 @@ def stage_structure(limit=None):
                 out["R2"][lv][n][k] = {"mean_excess": m_, "se": s_, "tau2": t2, "teams": len(ok),
                                        "z_above_2": sum(x["z"] > 2 for x in e), "z_below_-2": sum(x["z"] < -2 for x in e)}
     out["names"] = {str(k): v for k, v in names.items()}
+    return out
+
+
+# ---------------------------------------------------------------- explore (review R1, R3-R5 and power, exploratory)
+
+WY_TEAMS = 98     # Wyscout 2017/18 five leagues: the confirmation cohort's size
+NP = int(os.environ.get("FHA_SIMS", 200))   # power simulations; FHA_SIMS lowers it for smoke tests
+
+
+def stage_explore(limit=None):
+    """Exploration cohort (2015/16 leagues): R3 selection at small budgets, R4 absence model, R5 incremental
+    prediction, and power simulations for R1 and R4 at the confirmation cohort's size. Exploratory throughout."""
+    _, _, names, league, _, X = collect(limit)
+    C, PP, res = X["chances"], X["passes"], X["results"]
+    ch = {k: [(A, x) for _, A, x, _ in v] for k, v in C.items()}
+    teams = sorted({t for t, W in ch if (t, "train") in ch and (t, "test") in ch})
+    g = np.random.default_rng(SEED)
+    out = {"settings": {"seed": SEED, "status": "exploratory (docs/REVIEW.md 4.5)"}, "R3": {}, "R4": {}, "R5": {}, "power": {}}
+    # R3: held-out coverage of b players chosen on the first half
+    for b in range(1, 6):
+        cv = defaultdict(list)
+        for t in teams:
+            for k, S in protocol.select(ch[(t, "train")], PP[(t, "train")], b).items():
+                cv[k].append(mu.c(S, ch[(t, "test")]))
+        cv = {k: np.array(v) for k, v in cv.items()}
+        out["R3"][b] = {"mean": {k: float(v.mean()) for k, v in cv.items()},
+                        "exact_minus": {k: [float((cv["exact"] - v).mean()), boot(lambda i: (cv["exact"] - v)[i].mean(), len(v))]
+                                        for k, v in cv.items() if k != "exact"}}
+    # R4: second-half matches; absent = players with first-half phi who appeared in some second-half match but not this one
+    phi = {t: mu.phi(ch[(t, "train")]) for t in teams}
+    Ct = {t: mu.cb(ch[(t, "train")], 2)[0] for t in teams}
+    squad = defaultdict(set)
+    for t, o, W, h, xg, gf, ga, ap in res:
+        if W == "test":
+            squad[t] |= ap
+    rows = [{"team": t, "opp": o, "home": h, "y": xg, "C": Ct[t],
+             "a": sum(x for v, x in phi[t].items() if v in squad[t] and v not in ap)}
+            for t, o, W, h, xg, gf, ga, ap in res if W == "test" and t in phi]
+    b4, d4, _, disp = protocol.fit4(rows)
+    ci = protocol.boot4(rows, 500, g)
+    out["R4"] = {"beta": [b4, ci[0]], "delta": [d4, ci[1]], "dispersion": disp, "matches": len(rows),
+                 "share_with_absence": float(np.mean([r["a"] > 0 for r in rows])), "mean_absent_phi": float(np.mean([r["a"] for r in rows]))}
+    out["power"]["R4"] = protocol.power4(rows, [0.25, 0.5, 1.0, 2.0], NP, g)
+    # R5: second-half xG and points per match from first-half xG per match, with and without structure
+    per = defaultdict(lambda: defaultdict(list))
+    for t, o, W, h, xg, gf, ga, ap in res:
+        per[(t, W)]["xg"].append(xg)
+        per[(t, W)]["pts"].append(3 if gf > ga else 1 if gf == ga else 0)
+    x0 = np.array([np.mean(per[(t, "train")]["xg"]) for t in teams])
+    S = np.array([[mu.hill(phi[t].values(), 1), Ct[t]] for t in teams])
+    for k in ("xg", "pts"):
+        y = np.array([np.mean(per[(t, "test")][k]) for t in teams])
+        base, full = protocol.loo_r2(x0[:, None], y), protocol.loo_r2(np.column_stack([x0, S]), y)
+        inc = lambda i: protocol.loo_r2(np.column_stack([x0[i], S[i]]), y[i]) - protocol.loo_r2(x0[i][:, None], y[i])
+        out["R5"][k] = {"loo_r2_base": base, "loo_r2_with_structure": full, "increment": [full - base, boot(inc, len(y))],
+                        "structure": ["D1 of phi", "c(2)"]}
+    # R1 power at the confirmation cohort's size: lower bound of the ICC above 0.3
+    out["power"]["R1"] = {"teams": WY_TEAMS, "lower_bound": 0.3,
+                          "power": {r: protocol.icc_power(r, WY_TEAMS, 0.3, NP, 500, g) for r in (0.3, 0.4, 0.5, 0.6)}}
+    out["teams"] = len(teams)
     return out
 
 
@@ -722,7 +789,7 @@ if __name__ == "__main__":
     limit = int(a[a.index("--limit") + 1]) if "--limit" in a else None
     OUT.mkdir(exist_ok=True)
     stages = {"attack": stage_attack, "defence": stage_defence, "sequence": stage_sequence, "lineup": stage_lineup, "seasons": stage_seasons, "wyscout": stage_wyscout,
-              "structure": stage_structure}
+              "structure": stage_structure, "explore": stage_explore}
     versions = {"python": platform.python_version(), "numpy": np.__version__, "scipy (HiGHS)": scipy.__version__,
                 "scikit-learn": sklearn.__version__, "mcs": "symonyeal/Minimal-Metabolic-Interventions@a807469"}
     for s in [x for x in a if x in stages]:

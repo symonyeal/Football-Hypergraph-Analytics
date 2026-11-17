@@ -91,6 +91,7 @@ results are committed.
 | `fha/sb.py` | StatsBomb events to attacking groups, sequence cutoffs and lineup stints |
 | `fha/wy.py` | Wyscout events to rebuilt possessions, attacking groups and shot features |
 | `fha/mu.py` | Functionals of the chance measure, null models N0 to N2, match resampling, reliability (review section 4) |
+| `fha/protocol.py` | Second-round estimators and power simulations: selection rules (R3), absence model (R4), incremental prediction (R5), ICC power (R1) |
 | `fha/attack.py` | Fewest-players, separate-routes and coverage measures (LP and ILP by HiGHS, minimum transversals by the Rust `tr`) |
 | `fha/defence.py` | Gap, hole, persistence and shape of the defenders |
 | `fha/seq.py` | Sequence features and the design matrix |
@@ -102,7 +103,7 @@ results are committed.
 
 ```text
 cargo build --release && pip install -r requirements.txt && python -m pytest -q
-python -m fha.run attack      # or defence, sequence, lineup, seasons, wyscout, structure; run in full by the "derive" workflow
+python -m fha.run attack      # or defence, sequence, lineup, seasons, wyscout, structure, explore; run in full by the "derive" workflow
 python -m fha.report && python -m fha.site
 ```
 
