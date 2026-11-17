@@ -196,7 +196,79 @@ def lineup():
     (R / "lineup.md").write_text("\n".join(L) + "\n", encoding="utf-8")
 
 
+# ---------------------------------------------------------------- confirmation (docs/PROTOCOL.md)
+
+MARGIN = {"R1": 0.2, "R2": 0.02, "R3": 0.02, "R5": 0.05}   # smallest effects of interest, fixed by the protocol
+
+
+def three(lo, hi, m):
+    """Verdict from a 95% interval (lo, hi) and an equivalence margin m: supported when lo > 0, reversed when hi < 0,
+    equivalent to none when the whole interval lies within (-m, m), undetermined otherwise. An interval within the
+    margin but excluding 0 is supported (or reversed) and of less than practical size; the table shows both."""
+    v = "supported" if lo > 0 else "reversed" if hi < 0 else "equivalent to none" if -m < lo and hi < m else "undetermined"
+    return v + (", below the margin" if v in ("supported", "reversed") and -m < lo and hi < m else "")
+
+
+def holm(p):
+    """Holm-adjusted p-values, in the input order."""
+    o = sorted(range(len(p)), key=lambda i: p[i])
+    q, run = [0.0] * len(p), 0.0
+    for r, i in enumerate(o):
+        run = max(run, min(1.0, (len(p) - r) * p[i]))
+        q[i] = run
+    return q
+
+
+def verdicts(c):
+    """Every verdict of docs/PROTOCOL.md from results/confirm.json: rows (hypothesis, quantity, estimate, interval,
+    verdict, family)."""
+    from math import erfc, sqrt
+    S, E = c["structure"], c["explore"]
+    rows = []
+    for lv in ("player", "role"):
+        for k in ("D1", "c2", "tau_0.9", "c2 excess over N0", "tau_0.9 excess over N0"):
+            v = S["R1"][lv][k]["icc"]
+            rows.append(("R1", f"{lv} {k} ICC", v[0], v[1], three(v[1][0], v[1][1], MARGIN["R1"]), "primary" if lv == "player" and k in ("D1", "c2", "tau_0.9") else "secondary"))
+    for lv in ("player", "role"):
+        for n in ("N2", "N1", "N0"):
+            if n not in S["R2"][lv]:
+                continue
+            ks = [k for k in ("c2", "c3", "tau_0.9", "o2") if k in S["R2"][lv][n]]
+            p = [erfc(abs(S["R2"][lv][n][k]["mean_excess"] / S["R2"][lv][n][k]["se"]) / sqrt(2)) for k in ks]
+            for k, q in zip(ks, holm(p)):
+                v = S["R2"][lv][n][k]
+                lo, hi = v["mean_excess"] - 1.96 * v["se"], v["mean_excess"] + 1.96 * v["se"]
+                prim = lv == "player" and n == "N2" and k == "c2"
+                verdict = three(lo, hi, MARGIN["R2"])   # secondary: a nonzero verdict also needs Holm p < 0.05
+                if not prim and q >= 0.05 and verdict.startswith(("supported", "reversed")):
+                    verdict = "undetermined"
+                rows.append(("R2", f"{lv} {k} excess over {n}", v["mean_excess"], [lo, hi], verdict + ("" if prim else f" (Holm p {q:.3f})"),
+                             "primary" if prim else "secondary"))
+    for b in ("1", "2", "3", "4", "5"):
+        for k in ("involvement", "shapley", "pass strength"):
+            v = E["R3"][b]["exact_minus"][k]
+            rows.append(("R3", f"b = {b}: exact minus {k}", v[0], v[1], three(v[1][0], v[1][1], MARGIN["R3"]), "primary" if b == "2" and k == "involvement" else "secondary"))
+    for k in ("beta", "delta"):
+        v = E["R4"][k]
+        rows.append(("R4", k, v[0], v[1], "descriptive (no verdict; protocol R4)", "descriptive"))
+    for k in ("xg", "pts"):
+        v = E["R5"][k]["increment"]
+        rows.append(("R5", f"{k}: increment in LOO R^2", v[0], v[1], three(v[1][0], v[1][1], MARGIN["R5"]), "primary" if k == "xg" else "secondary"))
+    return rows
+
+
+def confirm():
+    c = json.loads((R / "confirm.json").read_text(encoding="utf-8"))
+    L = ["# Confirmation: Wyscout 2017/18 five leagues", "",
+         "Data: Wyscout public data set (Pappalardo et al., Scientific Data 6, 236, 2019; CC BY 4.0). xG from the StatsBomb-fitted "
+         "model (docs/POSTHOC.md P4). Run once under `docs/PROTOCOL.md` (tag `protocol-v1`); verdicts by its rules (`fha/report.py`, `verdicts`).", "",
+         f"Status: {c['structure']['settings']['status']}. Teams: {len(c['structure']['teams'])}.", "",
+         "| Hypothesis | Quantity | Estimate | 95% interval | Verdict | Family |", "| --- | --- | --- | --- | --- | --- |"]
+    L += [f"| {h} | {q} | {f(e, 3)} | {f(i[0], 3)} to {f(i[1], 3)} | {v} | {fm} |" for h, q, e, i, v, fm in verdicts(c)]
+    (R / "confirm.md").write_text("\n".join(L) + "\n", encoding="utf-8")
+
+
 if __name__ == "__main__":
-    for s, g in (("attack", attack), ("defence", defence), ("sequence", sequence), ("lineup", lineup)):
+    for s, g in (("attack", attack), ("defence", defence), ("sequence", sequence), ("lineup", lineup), ("confirm", confirm)):
         if (R / f"{s}.json").exists():
             g()

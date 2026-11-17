@@ -652,7 +652,8 @@ def summary(T):
                 ok = [i for i, v in enumerate(se) if v > 0]
                 if not ok:
                     continue
-                m_, s_, t2 = mu.pool([e[i]["obs"] - e[i]["mean"] for i in ok], [se[i] ** 2 for i in ok])
+                # variance of an excess: the observed value's match-resampling variance plus that of the null mean
+                m_, s_, t2 = mu.pool([e[i]["obs"] - e[i]["mean"] for i in ok], [se[i] ** 2 + e[i]["sd"] ** 2 / NR for i in ok])
                 out["R2"][lv][n][k] = {"mean_excess": m_, "se": s_, "tau2": t2, "teams": len(ok),
                                        "z_above_2": int(sum(x["z"] > 2 for x in e)), "z_below_-2": int(sum(x["z"] < -2 for x in e))}
     return out
