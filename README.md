@@ -10,6 +10,11 @@ matches 2004/05 to 2020/21; 360 freeze frames for eleven competitions) and the W
 2017/18 Premier League, La Liga, Bundesliga, Serie A and Ligue 1, the 2018 World Cup and Euro 2016). Every test was written down before the data was opened ([registered hypotheses](docs/HYPOTHESES.md)); what
 was noticed afterwards is kept apart ([post hoc notes](docs/POSTHOC.md)).
 
+**Under review.** A [design review](docs/REVIEW.md) of 16 November 2026 qualifies several findings below: the attack
+measures rise with matches played and are largely reproduced by how often each player is involved in chances, and the
+transversal sets do no better than ranking players by that count. Its section 6 lists the statements to correct;
+`python -m fha.audit` reproduces its numbers.
+
 ## What a chance is
 
 A chance is any possession that ends in an open-play shot, and the people behind it are the last three players
@@ -82,6 +87,7 @@ results are committed.
 | `fha/run.py`, `fha/report.py`, `fha/site.py` | Registered tests, results pages, site data |
 | `src/main.rs` | `tr`: minimal transversals by MMCS (`mcs` crate) |
 | `docs/MODEL.md` | Notation, measures and checks |
+| `docs/REVIEW.md`, `fha/audit.py` | Design review and improvement plan; the audit of the committed results it rests on |
 
 ```text
 cargo build --release && pip install -r requirements.txt && python -m pytest -q
