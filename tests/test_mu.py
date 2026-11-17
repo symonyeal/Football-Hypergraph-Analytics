@@ -99,3 +99,19 @@ def test_reliability_helpers():
     assert isclose(mu.brown(0.42, 2), 0.84 / 1.42)
     m, se, t2 = mu.pool([0.3, 0.3, 0.3], [0.01, 0.04, 0.01])
     assert isclose(m, 0.3) and t2 == 0.0 and isclose(se, (1 / (100 + 25 + 100)) ** 0.5)
+
+
+def test_swap_chain_keeps_degrees_sizes_strata_and_simplicity():
+    g = np.random.default_rng(4)
+    H = unit(FANO) * 3 + [(frozenset({0, 4}), 1.0)] * 2
+    E = [list(A) for A, _ in H]
+    L = np.array([0 if v < 3 else 1 for e in E for v in e])
+    lo = np.concatenate([[0], np.cumsum([len(e) for e in E])[:-1]])
+    seen = set()
+    for _ in range(20):
+        N = mu.swap(E, L, lo, H, g)
+        assert degrees(N) == degrees(H) and [len(A) for A, _ in N] == [len(A) for A, _ in H]
+        for (A, _), e in zip(N, E):   # each group keeps its stratum counts
+            assert sorted(v < 3 for v in A) == sorted(v < 3 for v in e) and len(A) == len(e)
+        seen.add(tuple(sorted(tuple(sorted(A)) for A, _ in N)))
+    assert len(seen) > 1   # the chain moves

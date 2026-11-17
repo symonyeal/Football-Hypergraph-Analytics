@@ -580,7 +580,9 @@ def window(job):
     if level == "player":
         R = [r for *_, r in rows]
         nulls["N1"] = lambda H, g: mu.redeal(H, g, R)
+    n0 = mu.FALLBACK[0]
     out["null"] = {k: mu.excess(G, f, STRUCT, NR, g) for k, f in nulls.items()}
+    out["fallback_draws"] = mu.FALLBACK[0] - n0   # null draws that needed mu.swap (docs/POSTHOC.md P6)
     return out
 
 

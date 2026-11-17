@@ -79,3 +79,17 @@ their reading:
   with matches.
 - H6: 87% of rating variance lies between teams; the ratings table is withdrawn from the site and the results page.
 - The 2015/16 cohort is spent for confirmation; further tests on it are exploratory.
+
+## P6. Protocol deviation: re-deal sampler fallback (17 November 2026)
+
+The first confirmation run (workflow run 44047510832) stopped in part 8 of 16: the frozen N0/N1 sampler
+(`mu.redeal` at `9eb0cd4`) found no repeat-free re-deal for one Wyscout window after 200 restarts of 20,000 repair
+swaps. The run was cancelled by the matrix; no part was merged and no confirmation statistic was printed or read.
+
+Change (made before any confirmation statistic was seen): the sampler keeps its first restart unchanged and, if that
+fails, draws from a chain of stub swaps started at the observed family (`mu.swap`: 10 sweeps; every state keeps the
+degrees, group sizes and strata). On the exploration windows rebuilt from committed aggregates, all 2,400 draws
+(player and role level, both halves and the season, 5 draws each) succeed in the first restart (at most 4,648 repair
+swaps), so every exploration result and the audit are unchanged (`fha.audit` output identical). The two samplers are
+not the same distribution; windows that need the fallback are counted in the confirmation output.
+

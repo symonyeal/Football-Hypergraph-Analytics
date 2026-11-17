@@ -262,7 +262,8 @@ def confirm():
     L = ["# Confirmation: Wyscout 2017/18 five leagues", "",
          "Data: Wyscout public data set (Pappalardo et al., Scientific Data 6, 236, 2019; CC BY 4.0). xG from the StatsBomb-fitted "
          "model (docs/POSTHOC.md P4). Run once under `docs/PROTOCOL.md` (tag `protocol-v1`); verdicts by its rules (`fha/report.py`, `verdicts`).", "",
-         f"Status: {c['structure']['settings']['status']}. Teams: {len(c['structure']['teams'])}.", "",
+         f"Status: {c['structure']['settings']['status']}. Teams: {len(c['structure']['teams'])}. Null draws made by the fallback "
+         f"sampler (docs/POSTHOC.md P6): {sum(w[lv].get('fallback_draws', 0) for t in c['structure']['teams'].values() for W, w in t.items() if W in ('train', 'test', 'season') for lv in w)}.", "",
          "| Hypothesis | Quantity | Estimate | 95% interval | Verdict | Family |", "| --- | --- | --- | --- | --- | --- |"]
     L += [f"| {h} | {q} | {f(e, 3)} | {f(i[0], 3)} to {f(i[1], 3)} | {v} | {fm} |" for h, q, e, i, v, fm in verdicts(c)]
     (R / "confirm.md").write_text("\n".join(L) + "\n", encoding="utf-8")

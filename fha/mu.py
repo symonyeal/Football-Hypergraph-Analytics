@@ -113,13 +113,15 @@ def boot(Gm, f, B, g):
 def redeal(G, g, R=None):
     """Null N0 (R None) or N1 (R strata): every player keeps their number of chances within each stratum and every
     chance keeps its size, stratum slots and xG; memberships are re-dealt (stub matching), and groups that repeat a
-    player are repaired by swaps with a random member of the same stratum."""
+    player are repaired by swaps with a random member of the same stratum. If that repair fails (it can cycle when
+    few labels fill most groups), the draw comes from swap(), a chain started at the observed family (docs/POSTHOC.md
+    P6); every exploration window succeeds without it."""
     E = [list(A) for A, _ in G]
     L = np.array([R[i][v] if R else 0 for i, e in enumerate(E) for v in e])
     stubs = np.array([v for e in E for v in e], dtype=object)
     cut = np.cumsum([len(e) for e in E])
     lo = np.concatenate([[0], cut[:-1]])
-    for _ in range(200):
+    for _ in range(1):
         for s in sorted(set(L.tolist())):
             ix = np.flatnonzero(L == s)
             sub = stubs[ix]
@@ -137,7 +139,30 @@ def redeal(G, g, R=None):
                 if L[lo[j] + b] == L[lo[i] + a]:
                     break
             P[i][a], P[j][b] = P[j][b], P[i][a]
-    raise RuntimeError("redeal: no simple re-deal found")
+    return swap(E, L, lo, G, g)
+
+
+FALLBACK = [0]   # draws made by swap() in this process; run.window reports the count per window
+
+
+def swap(E, L, lo, G, g, sweeps=10):
+    """Re-deal by a chain of stub swaps from the observed family E: two random stubs of the same stratum in
+    different groups exchange players when both groups stay free of repeats; sweeps x (number of stubs) proposals.
+    Every state has the degrees, sizes and strata of E, and E is a valid start, so a draw always exists."""
+    FALLBACK[0] += 1
+    P = [list(e) for e in E]
+    pos = [(i, a) for i, e in enumerate(P) for a in range(len(e))]
+    by = {}
+    for k, (i, a) in enumerate(pos):
+        by.setdefault(L[lo[i] + a], []).append(k)
+    for _ in range(sweeps * len(pos)):
+        k = int(g.integers(len(pos)))
+        S = by[L[lo[pos[k][0]] + pos[k][1]]]
+        (i, a), (j, b) = pos[k], pos[S[int(g.integers(len(S)))]]
+        u, v = P[i][a], P[j][b]
+        if i != j and u != v and v not in P[i] and u not in P[j]:
+            P[i][a], P[j][b] = v, u
+    return [(frozenset(e), w) for e, (_, w) in zip(P, G)]
 
 
 def fit3(G, tol=1e-8, it=5000):
