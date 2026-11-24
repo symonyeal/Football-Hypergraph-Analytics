@@ -38,6 +38,11 @@ def openplay(ev):
     return ev["type"]["name"] == "Shot" and ev["shot"]["type"]["name"] == "Open Play"
 
 
+def goal(ev):
+    """A goal for ev's team: a scored shot or an own goal by the opponent."""
+    return (ev["type"]["name"] == "Shot" and ev["shot"]["outcome"]["name"] == "Goal") or ev["type"]["name"] == "Own Goal For"
+
+
 def onball(poss):
     """On-ball actions of the possession team, in event order."""
     return [e for e in sorted(poss, key=lambda e: e["index"]) if e["type"]["name"] in ON and e["team"]["id"] == e["possession_team"]["id"]]
@@ -106,11 +111,8 @@ def u(c, period):
     return c + 100 * (period - 1)
 
 
-def stints(lu, h, a, shots, spans):
-    """Intervals of constant personnel within the played spans (start, end) on the u axis.
-    lu: lineups JSON; h, a: team ids; shots: (u, team, xG). Each stint: t0, t1, home and away player sets,
-    open-play xG of each side, manpower = |home| - |away|."""
-    end = max(b for _, b in spans)
+def intervals(lu, h, a, end):
+    """On-pitch intervals from lineups JSON lu: team id -> [(player, start, stop)] on the u axis, open stops at end."""
     on = {h: [], a: []}
     for t in lu:
         for p in t["lineup"]:
@@ -118,15 +120,22 @@ def stints(lu, h, a, shots, spans):
                 b = u(clock(q["from"]), q.get("from_period") or 1)
                 c = u(clock(q["to"]), q.get("to_period") or 1) if q["to"] else end
                 on[t["team_id"]].append((p["player_id"], b, c))
+    return on
+
+
+def stints(lu, h, a, shots, spans):
+    """Intervals of constant personnel within the played spans (start, end) on the u axis.
+    lu: lineups JSON; h, a: team ids; shots: (u, team, xG). Each stint: t0, t1, home and away player sets,
+    open-play xG of each side, manpower = |home| - |away|."""
+    end = max(b for _, b in spans)
+    on = intervals(lu, h, a, end)
     cuts = sorted({x for sp in spans for x in sp} | {x for v in on.values() for _, b, c in v for x in (b, c) if 0 < x < end})
     S = []
     for t0, t1 in zip(cuts, cuts[1:]):
         mid = (t0 + t1) / 2
         if not any(a0 <= mid < a1 for a0, a1 in spans):
             continue
-        H = {i for i, b, c in on[h] if b <= mid < c}
-        A = {i for i, b, c in on[a] if b <= mid < c}
-        S.append({"t0": t0, "t1": t1, "home": H, "away": A, "manpower": len(H) - len(A),
-                  "xg_home": sum(x for m, t, x in shots if t == h and t0 <= m < t1),
-                  "xg_away": sum(x for m, t, x in shots if t == a and t0 <= m < t1)})
+        H, A = ({i for i, b, c in on[s] if b <= mid < c} for s in (h, a))
+        xh, xa = (sum(x for m, t, x in shots if t == s and t0 <= m < t1) for s in (h, a))
+        S.append({"t0": t0, "t1": t1, "home": H, "away": A, "manpower": len(H) - len(A), "xg_home": xh, "xg_away": xa})
     return S

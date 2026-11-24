@@ -219,31 +219,39 @@ def holm(p):
     return q
 
 
+def excess_rows(R2):
+    """R2 verdict rows from the pooled excesses R2[level][null][statistic]: a normal 95% interval from the standard
+    error; each (level, null) is one Holm family, and a secondary nonzero verdict also needs Holm p < 0.05."""
+    from math import erfc, sqrt
+    rows = []
+    for lv in ("player", "role"):
+        for n in ("N2", "N1", "N0"):
+            if n not in R2[lv]:
+                continue
+            ks = [k for k in ("c2", "c3", "tau_0.9", "o2") if k in R2[lv][n]]
+            p = [erfc(abs(R2[lv][n][k]["mean_excess"] / R2[lv][n][k]["se"]) / sqrt(2)) for k in ks]
+            for k, q in zip(ks, holm(p)):
+                v = R2[lv][n][k]
+                lo, hi = v["mean_excess"] - 1.96 * v["se"], v["mean_excess"] + 1.96 * v["se"]
+                prim = lv == "player" and n == "N2" and k == "c2"
+                verdict = three(lo, hi, MARGIN["R2"])
+                if not prim and q >= 0.05 and verdict.startswith(("supported", "reversed")):
+                    verdict = "undetermined"
+                rows.append(("R2", f"{lv} {k} excess over {n}", v["mean_excess"], [lo, hi], verdict + ("" if prim else f" (Holm p {q:.3f})"),
+                             "primary" if prim else "secondary"))
+    return rows
+
+
 def verdicts(c):
     """Every verdict of docs/PROTOCOL.md from results/confirm.json: rows (hypothesis, quantity, estimate, interval,
     verdict, family)."""
-    from math import erfc, sqrt
     S, E = c["structure"], c["explore"]
     rows = []
     for lv in ("player", "role"):
         for k in ("D1", "c2", "tau_0.9", "c2 excess over N0", "tau_0.9 excess over N0"):
             v = S["R1"][lv][k]["icc"]
             rows.append(("R1", f"{lv} {k} ICC", v[0], v[1], three(v[1][0], v[1][1], MARGIN["R1"]), "primary" if lv == "player" and k in ("D1", "c2", "tau_0.9") else "secondary"))
-    for lv in ("player", "role"):
-        for n in ("N2", "N1", "N0"):
-            if n not in S["R2"][lv]:
-                continue
-            ks = [k for k in ("c2", "c3", "tau_0.9", "o2") if k in S["R2"][lv][n]]
-            p = [erfc(abs(S["R2"][lv][n][k]["mean_excess"] / S["R2"][lv][n][k]["se"]) / sqrt(2)) for k in ks]
-            for k, q in zip(ks, holm(p)):
-                v = S["R2"][lv][n][k]
-                lo, hi = v["mean_excess"] - 1.96 * v["se"], v["mean_excess"] + 1.96 * v["se"]
-                prim = lv == "player" and n == "N2" and k == "c2"
-                verdict = three(lo, hi, MARGIN["R2"])   # secondary: a nonzero verdict also needs Holm p < 0.05
-                if not prim and q >= 0.05 and verdict.startswith(("supported", "reversed")):
-                    verdict = "undetermined"
-                rows.append(("R2", f"{lv} {k} excess over {n}", v["mean_excess"], [lo, hi], verdict + ("" if prim else f" (Holm p {q:.3f})"),
-                             "primary" if prim else "secondary"))
+    rows += excess_rows(S["R2"])
     for b in ("1", "2", "3", "4", "5"):
         for k in ("involvement", "shapley", "pass strength"):
             v = E["R3"][b]["exact_minus"][k]

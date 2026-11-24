@@ -99,6 +99,33 @@ def providers(Zt, Yt):
     return out
 
 
+def seasons(Z, Y):
+    """Season views of the StatsBomb seasons Z and, when present, the Wyscout results Y: every team certified, the
+    season-to-season pairs, and the Wyscout xG model and the 2018 World Cup provider comparison."""
+    comps = [{**c, "source": "StatsBomb"} for c in Z["competitions"]] + (Y["competitions"] if Y else [])
+    teams = Z["teams"] + (Y["teams"] if Y else [])
+    for t in teams:
+        certify(t)
+    keys = ("key", "team", "team_id", "matches", "xg_per_match", "groups", "m", "xg", "tau", "tau_star", "nu", "cov", "solo")
+    out = {"seasons": {"competitions": comps, "teams": [{k: t[k] for k in keys} for t in teams]}, "s2s": s2s(teams, comps)}
+    if Y:
+        out["wyscout"] = {"xg_model": Y["xg_model"], "source": Y["source"],
+                          "xg_check": {c["key"]: c["xg_check"] for c in Y["competitions"]}}
+        out["providers"] = providers(Z["teams"], Y["teams"])
+    return out
+
+
+def split_half(A, names):
+    """Attack view of the split-half results A: each team's halves and H1-H3, with H3 players under their common
+    names from names."""
+    full = {v: k for k, v in A["names"].items()}
+    nick = lambda n: names.get(full.get(n, ""), n)
+    H = [{"team": t, "league": v["league"], **{W: {"tau": v[W]["tau"], "nu": v[W]["nu"], "top2": v[W]["cov"]["2"][0]}
+                                               for W in ("train", "test")}} for t, v in A["teams"].items()]
+    H3 = {k: {**h, "teams": [[r[0], nick(r[1]), r[2], r[3], r[4]] for r in h["teams"]]} for k, h in A["H3"].items()}
+    return {"halves": H, "H1": A["H1"], "H1_q01": A["sensitivity_q0.1"], "H2": A["H2"], "H3": H3}
+
+
 def main():
     A, D, S, L, Z, Y = load("attack"), load("defence"), load("sequence"), load("lineup"), load("seasons"), load("wyscout")
     names = {}
@@ -106,24 +133,9 @@ def main():
         names.update({str(k): v for k, v in (src or {}).items()})
     data = {"meta": {"source": "StatsBomb open data, hudl/open-data commit 4b73468"}, "names": names}
     if Z:
-        comps = [{**c, "source": "StatsBomb"} for c in Z["competitions"]] + (Y["competitions"] if Y else [])
-        teams = Z["teams"] + (Y["teams"] if Y else [])
-        for t in teams:
-            certify(t)
-        keys = ("key", "team", "team_id", "matches", "xg_per_match", "groups", "m", "xg", "tau", "tau_star", "nu", "cov", "solo")
-        data["seasons"] = {"competitions": comps, "teams": [{k: t[k] for k in keys} for t in teams]}
-        data["s2s"] = s2s(teams, comps)
-        if Y:
-            data["wyscout"] = {"xg_model": Y["xg_model"], "source": Y["source"],
-                               "xg_check": {c["key"]: c["xg_check"] for c in Y["competitions"]}}
-            data["providers"] = providers(Z["teams"], Y["teams"])
+        data.update(seasons(Z, Y))
     if A:
-        full = {v: k for k, v in A["names"].items()}
-        nick = lambda n: names.get(full.get(n, ""), n)
-        halves = [{"team": t, "league": v["league"], **{W: {"tau": v[W]["tau"], "nu": v[W]["nu"], "top2": v[W]["cov"]["2"][0]}
-                                                        for W in ("train", "test")}} for t, v in A["teams"].items()]
-        H3 = {k: {**h, "teams": [[r[0], nick(r[1]), r[2], r[3], r[4]] for r in h["teams"]]} for k, h in A["H3"].items()}
-        data["attack"] = {"halves": halves, "H1": A["H1"], "H1_q01": A["sensitivity_q0.1"], "H2": A["H2"], "H3": H3}
+        data["attack"] = split_half(A, names)
     if D:
         data["defence"] = {k: D[k] for k in D if k != "coef"}
         chk = checks(D["model"]["gaps"])

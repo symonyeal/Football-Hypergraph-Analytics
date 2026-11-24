@@ -30,7 +30,7 @@ from sklearn.metrics import log_loss
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
-from fha import attack, defence, mu, protocol, sb, wy
+from fha import attack, defence, mu, protocol, sb, seq, wy
 
 SHA = "4b73468fc5b0f1950f9f66fada70ad3a4f9327cb"
 RAW = f"https://raw.githubusercontent.com/hudl/open-data/{SHA}/data"
@@ -93,16 +93,7 @@ def collect(limit, leagues=LEAGUES):
             for g in sb.attack_groups(ev):
                 G[(g["team"], W)].append((g["A"], g["xg"]))
                 C[(g["team"], W)].append((m["match_id"], g["A"], g["xg"], {v: ro[v] for v in g["A"]}))
-            xg = Counter()
-            for e in ev:
-                if "player" in e:
-                    names[e["player"]["id"]] = e["player"]["name"]
-                if e["type"]["name"] in sb.ON and e["team"]["id"] == e["possession_team"]["id"]:
-                    U[(e["team"]["id"], W)][e["player"]["id"]] += 1
-                if sb.openplay(e):
-                    xg[e["team"]["id"]] += e["shot"]["statsbomb_xg"]
-                if e["type"]["name"] == "Pass" and "recipient" in e["pass"] and "outcome" not in e["pass"]:
-                    PP[(e["team"]["id"], W)][(e["player"]["id"], e["pass"]["recipient"]["id"])] += 1
+            xg = tally(ev, W, names, U, PP)
             score = {h: m["home_score"], a: m["away_score"]}
             for t in lu:
                 st = {p["player_id"] for p in t["lineup"] if any(q["start_reason"] == "Starting XI" for q in p["positions"])}
@@ -111,6 +102,21 @@ def collect(limit, leagues=LEAGUES):
                 games.append((t["team_id"], o, W, xg[t["team_id"]], st, ap))
                 res.append((t["team_id"], o, W, int(t["team_id"] == h), xg[t["team_id"]], score[t["team_id"]], score[o], ap))
     return G, U, names, league, games, {"chances": C, "passes": PP, "results": res}
+
+
+def tally(ev, W, names, U, PP):
+    """Event counts of one match in window W, added to names, U and PP as in collect(); returns open-play xG per team."""
+    xg = Counter()
+    for e in ev:
+        if "player" in e:
+            names[e["player"]["id"]] = e["player"]["name"]
+        if e["type"]["name"] in sb.ON and e["team"]["id"] == e["possession_team"]["id"]:
+            U[(e["team"]["id"], W)][e["player"]["id"]] += 1
+        if sb.openplay(e):
+            xg[e["team"]["id"]] += e["shot"]["statsbomb_xg"]
+        if e["type"]["name"] == "Pass" and "recipient" in e["pass"] and "outcome" not in e["pass"]:
+            PP[(e["team"]["id"], W)][(e["player"]["id"], e["pass"]["recipient"]["id"])] += 1
+    return xg
 
 
 def measures(Fw, U):
@@ -145,18 +151,26 @@ def stage_attack(limit=None):
                 Fw = [(A, x) for A, x in G[(t, W)] if x >= q]
                 R[q][t][W] = measures(Fw, U[(t, W)]) if Fw else None
     M = R[0.0]
-    out = {"teams": {}, "H1": {}, "H2": {}, "H3": {}, "sensitivity_q0.1": {}}
     for t in teams:
-        out["teams"][names[t]] = {"league": league[t], **{W: M[t][W] for W in ("train", "test")}}
         for W in ("train", "test"):  # aggregate per distinct group: (players, possessions, xG); no event rows
-            out["teams"][names[t]][W]["groups"] = attack.agg(G[(t, W)])
-    # H1: split-half stability
-    for k in ("tau", "tau_star", "nu"):
-        out["H1"][k] = rho([M[t]["train"][k] for t in teams], [M[t]["test"][k] for t in teams])
-        ok = [t for t in teams if R[0.1][t]["train"] and R[0.1][t]["test"]]
-        out["sensitivity_q0.1"][k] = rho([R[0.1][t]["train"][k] for t in ok], [R[0.1][t]["test"][k] for t in ok])
-    out["H1"]["cov2"] = rho([M[t]["train"]["cov"][2][0] for t in teams], [M[t]["test"]["cov"][2][0] for t in teams])
-    # H2: held-out coverage of transversal, exact-coverage and usage sets of equal size
+            M[t][W]["groups"] = attack.agg(G[(t, W)])
+    H1, sens = stability(R, teams)
+    return {"teams": {names[t]: {"league": league[t], **M[t]} for t in teams}, "H1": H1,
+            "H2": held_out(M, G, teams), "H3": absence(M, games, names, teams), "sensitivity_q0.1": sens,
+            "names": {str(k): v for k, v in names.items()}}
+
+
+def stability(R, teams):
+    """H1: split-half Spearman of each measure, all chances (R[0.0]) and chances of xG >= 0.1 (R[0.1])."""
+    M, Q = R[0.0], R[0.1]
+    ok = [t for t in teams if Q[t]["train"] and Q[t]["test"]]
+    H1 = {k: rho([M[t]["train"][k] for t in teams], [M[t]["test"][k] for t in teams]) for k in ("tau", "tau_star", "nu")}
+    H1["cov2"] = rho([M[t]["train"]["cov"][2][0] for t in teams], [M[t]["test"]["cov"][2][0] for t in teams])
+    return H1, {k: rho([Q[t]["train"][k] for t in ok], [Q[t]["test"][k] for t in ok]) for k in ("tau", "tau_star", "nu")}
+
+
+def held_out(M, G, teams):
+    """H2: test-half coverage of the transversal, exact-coverage and usage sets of tau players chosen on the training half."""
     cT, cC, cU = [], [], []
     for t in teams:
         tr, Ft = M[t]["train"], [(set(A), x) for A, x in G[(t, "test")]]
@@ -166,30 +180,45 @@ def stage_attack(limit=None):
         cC.append(attack.covered(tr["cov"][b][1], Fs, w))
         cU.append(attack.covered(tr["usage"][:b], Fs, w))
     cT, cC, cU = map(np.array, (cT, cC, cU))
-    for k, d in (("C_minus_U", cC - cU), ("T_minus_U", cT - cU)):
-        out["H2"][k] = [float(d.mean()), boot(lambda i: d[i].mean(), len(d))]
-    out["H2"]["mean_coverage"] = {"T": float(cT.mean()), "C": float(cC.mean()), "U": float(cU.mean())}
-    # H3: absence of the top bottleneck player
+    H2 = {k: [float(d.mean()), boot(lambda i: d[i].mean(), len(d))] for k, d in (("C_minus_U", cC - cU), ("T_minus_U", cT - cU))}
+    H2["mean_coverage"] = {"T": float(cT.mean()), "C": float(cC.mean()), "U": float(cU.mean())}
+    return H2
+
+
+def absence(M, games, names, teams):
+    """H3: drop in second-half xG, relative to each opponent's first-half concession, when the top bottleneck (or
+    usage) player missed a match against when he started; teams with at least 3 of each."""
+    rel = relative(games)
+    H3 = {}
+    for key, pick in (("bottleneck", lambda t: M[t]["train"]["v_star"]), ("usage", lambda t: M[t]["train"]["usage"][0])):
+        rows = []
+        for t in teams:
+            v = pick(t)
+            a_abs = [x for x, st, ap in rel[t] if v not in ap]
+            a_st = [x for x, st, ap in rel[t] if v in st]
+            if len(a_abs) >= 3 and len(a_st) >= 3:
+                rows.append((t, names[v], len(a_abs), len(a_st), 1 - np.mean(a_abs) / np.mean(a_st)))
+        H3[key] = {"teams": [[names[t], p, na, ns, float(d)] for t, p, na, ns, d in rows]}
+        if len(rows) >= 5:
+            d = [r[4] for r in rows]
+            H3[key]["rho_nu"] = rho([M[r[0]]["train"]["nu"] for r in rows], d)
+            H3[key]["rho_cov2"] = rho([M[r[0]]["train"]["cov"][2][0] for r in rows], d)
+    return H3
+
+
+def relative(games):
+    """Second-half matches of each team as (xG over the opponent's mean first-half xG conceded, starters, appeared),
+    in game order; matches against an opponent with no first-half matches or zero xG conceded in them are left out."""
     conceded = defaultdict(list)
     for t, o, W, xg, _, _ in games:
         if W == "train":
             conceded[o].append(xg)
     cbar = {o: float(np.mean(v)) for o, v in conceded.items()}
-    for key, pick in (("bottleneck", lambda t: M[t]["train"]["v_star"]), ("usage", lambda t: M[t]["train"]["usage"][0])):
-        rows = []
-        for t in teams:
-            v = pick(t)
-            a_abs = [xg / cbar[o] for tt, o, W, xg, st, ap in games if tt == t and W == "test" and v not in ap and cbar.get(o)]
-            a_st = [xg / cbar[o] for tt, o, W, xg, st, ap in games if tt == t and W == "test" and v in st and cbar.get(o)]
-            if len(a_abs) >= 3 and len(a_st) >= 3:
-                rows.append((t, names[v], len(a_abs), len(a_st), 1 - np.mean(a_abs) / np.mean(a_st)))
-        out["H3"][key] = {"teams": [[names[t], p, na, ns, float(d)] for t, p, na, ns, d in rows]}
-        if len(rows) >= 5:
-            d = [r[4] for r in rows]
-            out["H3"][key]["rho_nu"] = rho([M[r[0]]["train"]["nu"] for r in rows], d)
-            out["H3"][key]["rho_cov2"] = rho([M[r[0]]["train"]["cov"][2][0] for r in rows], d)
-    out["names"] = {str(k): v for k, v in names.items()}
-    return out
+    rel = defaultdict(list)
+    for t, o, W, xg, st, ap in games:
+        if W == "test" and cbar.get(o):
+            rel[t].append((xg / cbar[o], st, ap))
+    return rel
 
 
 # ---------------------------------------------------------------- defence (H5)
@@ -243,9 +272,47 @@ def _passes(m):
     return rows
 
 
+DEF_SETS = {"base": ["x", "yy", "dist"], "shape": ["x", "yy", "dist", "width", "depth", "area"],
+            "gaps": ["x", "yy", "dist", "width", "depth", "area", "gap", "hole"],
+            "topology": ["x", "yy", "dist", "width", "depth", "area", "gap", "hole", "h1"]}
+
+
+def design(R, cols):
+    return np.array([[r[c] for c in cols] for r in R])
+
+
 def stage_defence(limit=None):
     """Registered H5 on the training and test tournaments; every other 360 competition is scored descriptively."""
     reg = {f"{c}/{s}": W for W, comps in (("train", D_TRAIN), ("test", D_TEST)) for c, s in comps}
+    data, label = defence_rows(reg, limit)
+    tr, te = data["train"], data["test"]
+    ytr, yte = np.array([r["y"] for r in tr]), np.array([r["y"] for r in te])
+    mt = np.array([r["match"] for r in te])
+    fit, L, coef, model = {}, {}, {}, {}
+    for k, cols in DEF_SETS.items():
+        f = fit[k] = make_pipeline(StandardScaler(), LogisticRegression(C=1.0, max_iter=1000)).fit(design(tr, cols), ytr)
+        p = f.predict_proba(design(te, cols))[:, 1]
+        L[k] = -(yte * np.log(p) + (1 - yte) * np.log(1 - p))
+        coef[k] = dict(zip(cols, f[-1].coef_[0].tolist()))
+        model[k] = {"cols": cols, "mean": f[0].mean_.tolist(), "scale": f[0].scale_.tolist(),
+                    "coef": f[-1].coef_[0].tolist(), "intercept": float(f[-1].intercept_[0])}
+    u = np.unique(mt)
+    idx = {g: np.flatnonzero(mt == g) for g in u}
+
+    def paired(a, b):
+        d = L[a] - L[b]
+        return [float(d.mean()), boot(lambda i: np.concatenate([d[idx[u[j]]] for j in i]).mean(), len(u))]
+
+    allr = tr + te
+    return {"n": {"train": len(tr), "test": len(te)}, "rate": {"train": float(ytr.mean()), "test": float(yte.mean())},
+            "logloss": {k: float(L[k].mean()) for k in DEF_SETS},
+            "H5a_gaps_vs_shape": paired("gaps", "shape"), "H5b_topology_vs_gaps": paired("topology", "gaps"),
+            "shape_vs_base": paired("shape", "base"), "coef": coef, "model": model,
+            "skipped_matches": SKIPPED, "by_competition": by_competition(data, label, reg, fit["gaps"], allr), **by_quartile(allr)}
+
+
+def defence_rows(reg, limit):
+    """Pass rows of every competition with 360 data, by role ('train', 'test' or 'other'), and competition labels."""
     data, label = {"train": [], "test": [], "other": []}, {}
     for c in get("competitions.json"):
         key = f"{c['competition_id']}/{c['season_id']}"
@@ -258,57 +325,35 @@ def stage_defence(limit=None):
                 for r in rows:
                     r["comp"] = key
                 data[reg.get(key, "other")] += rows
-    sets = {"base": ["x", "yy", "dist"], "shape": ["x", "yy", "dist", "width", "depth", "area"],
-            "gaps": ["x", "yy", "dist", "width", "depth", "area", "gap", "hole"],
-            "topology": ["x", "yy", "dist", "width", "depth", "area", "gap", "hole", "h1"]}
-    tr, te = data["train"], data["test"]
-    ytr, yte = np.array([r["y"] for r in tr]), np.array([r["y"] for r in te])
-    mt = np.array([r["match"] for r in te])
-    L = {}
-    for k, cols in sets.items():
-        X = lambda R: np.array([[r[c] for c in cols] for r in R])
-        f = make_pipeline(StandardScaler(), LogisticRegression(C=1.0, max_iter=1000)).fit(X(tr), ytr)
-        p = f.predict_proba(X(te))[:, 1]
-        L[k] = -(yte * np.log(p) + (1 - yte) * np.log(1 - p))
-        coef = dict(zip(cols, f[-1].coef_[0].tolist()))
-        L[k + "_coef"] = coef
-        L[k + "_fit"] = f
-        L[k + "_model"] = {"cols": cols, "mean": f[0].mean_.tolist(), "scale": f[0].scale_.tolist(),
-                           "coef": f[-1].coef_[0].tolist(), "intercept": float(f[-1].intercept_[0])}
-    u = np.unique(mt)
-    idx = {g: np.flatnonzero(mt == g) for g in u}
+    return data, label
 
-    def paired(a, b):
-        d = L[a] - L[b]
-        return [float(d.mean()), boot(lambda i: np.concatenate([d[idx[u[j]]] for j in i]).mean(), len(u))]
 
-    out = {"n": {"train": len(tr), "test": len(te)}, "rate": {"train": float(ytr.mean()), "test": float(yte.mean())},
-           "logloss": {k: float(L[k].mean()) for k in sets},
-           "H5a_gaps_vs_shape": paired("gaps", "shape"), "H5b_topology_vs_gaps": paired("topology", "gaps"),
-           "shape_vs_base": paired("shape", "base"), "coef": {k: L[k + "_coef"] for k in sets},
-           "model": {k: L[k + "_model"] for k in sets}}
-    allr = tr + te
+def by_competition(data, label, reg, f, allr):
+    """Descriptive scores of each competition under the gaps model f; hole quartiles are those of the registered rows allr."""
     qh = np.quantile([r["hole"] for r in allr], [0, .25, .5, .75, 1])
-    g = sets["gaps"]
-    out["skipped_matches"] = SKIPPED
-    out["by_competition"] = []
-    for key in sorted({r["comp"] for r in data["train"] + data["test"] + data["other"]}):
-        R = [r for r in data["train"] + data["test"] + data["other"] if r["comp"] == key]
+    rows, out = data["train"] + data["test"] + data["other"], []
+    for key in sorted({r["comp"] for r in rows}):
+        R = [r for r in rows if r["comp"] == key]
         y = np.array([r["y"] for r in R])
-        p = L["gaps_fit"].predict_proba(np.array([[r[c] for c in g] for r in R]))[:, 1]
+        p = f.predict_proba(design(R, DEF_SETS["gaps"]))[:, 1]
         hv = np.array([r["hole"] for r in R])
-        out["by_competition"].append({"key": key, "label": label[key], "role": reg.get(key, "descriptive"), "passes": len(R),
-                                      "matches": len({r["match"] for r in R}), "entry_rate": float(y.mean()), "predicted": float(p.mean()),
-                                      "gap_median": float(np.median([r["gap"] for r in R])), "hole_median": float(np.median(hv)),
-                                      "entry_by_hole_quartile": [float(y[(hv >= qh[i]) & (hv <= qh[i + 1])].mean()) if ((hv >= qh[i]) & (hv <= qh[i + 1])).any() else None for i in range(4)]})
+        out.append({"key": key, "label": label[key], "role": reg.get(key, "descriptive"), "passes": len(R),
+                    "matches": len({r["match"] for r in R}), "entry_rate": float(y.mean()), "predicted": float(p.mean()),
+                    "gap_median": float(np.median([r["gap"] for r in R])), "hole_median": float(np.median(hv)),
+                    "entry_by_hole_quartile": [float(y[(hv >= qh[i]) & (hv <= qh[i + 1])].mean()) if ((hv >= qh[i]) & (hv <= qh[i + 1])).any() else None for i in range(4)]})
+    return out
+
+
+def by_quartile(allr):
+    """Box-entry rate by quartile of gap, hole and h1, and for passes ending inside the largest hole, over rows allr."""
+    y = np.array([r["y"] for r in allr])
+    out = {}
     for k in ("gap", "hole", "h1"):
         v = np.array([r[k] for r in allr])
-        y = np.array([r["y"] for r in allr])
         qs = np.quantile(v, [0, .25, .5, .75, 1])
         out[f"{k}_quartiles_m"] = qs.tolist()
         out[f"{k}_entry_rate_by_quartile"] = [float(y[(v >= qs[i]) & (v <= qs[i + 1])].mean()) for i in range(4)]
     ih = np.array([r["in_hole"] for r in allr])
-    y = np.array([r["y"] for r in allr])
     out["in_hole_share"] = {"entry": float(ih[y == 1].mean()), "all": float(ih.mean()),
                             "entry_rate_in_hole": float(y[ih].mean()) if ih.any() else None, "entry_rate_outside": float(y[~ih].mean())}
     return out
@@ -342,10 +387,9 @@ def vaep_rows(ev, mid, h, root):
     return {k: {f"v:{c}": float(x) for c, x in row.items() if x} for k, row in X.iterrows()}
 
 
-def stage_sequence(limit=None):
+def sequence_rows(limit):
+    """(match, W, feature blocks, open-play shot after the cutoff) of every possession alive at the cutoff."""
     import tempfile
-    from sklearn.model_selection import GroupKFold
-    from fha import seq
     root = Path(tempfile.mkdtemp())
     rows = []
     for c, s in LEAGUES:
@@ -355,8 +399,7 @@ def stage_sequence(limit=None):
             ev = get(f"events/{m['match_id']}.json")
             h = m["home_team"]["home_team_id"]
             V = vaep_rows(ev, m["match_id"], h, root)
-            goals = [(e["index"], e["team"]["id"]) for e in ev if (e["type"]["name"] == "Shot" and e["shot"]["outcome"]["name"] == "Goal")
-                     or e["type"]["name"] == "Own Goal For"]
+            goals = [(e["index"], e["team"]["id"]) for e in ev if sb.goal(e)]
             for poss in sb.possessions(ev):
                 k = sb.cutoff(poss)
                 if not k["alive"]:
@@ -368,6 +411,26 @@ def stage_sequence(limit=None):
                 f = seq.features(first, ctx, k["P"])
                 f["v"] = next((V[e["id"]] for e in reversed(first) if e["id"] in V), {})
                 rows.append((m["match_id"], W, f, k["y"]))
+    return rows
+
+
+def logit_cv(Xtr, ytr, gtr, Xte):
+    """L2 logistic regression with C chosen by 5-fold cross-validated log loss, folds grouped by match gtr; returns
+    (C, test probabilities clipped to [1e-12, 1 - 1e-12])."""
+    from sklearn.model_selection import GroupKFold
+    cv = {}
+    for C in (0.001, 0.01, 0.1, 1.0):
+        ls = []
+        for a, b in GroupKFold(5).split(Xtr, ytr, gtr):
+            p = LogisticRegression(C=C, max_iter=2000).fit(Xtr[a], ytr[a]).predict_proba(Xtr[b])[:, 1]
+            ls.append(log_loss(ytr[b], p, labels=[0, 1]))
+        cv[C] = float(np.mean(ls))
+    C = min(cv, key=cv.get)
+    return C, np.clip(LogisticRegression(C=C, max_iter=2000).fit(Xtr, ytr).predict_proba(Xte)[:, 1], 1e-12, 1 - 1e-12)
+
+
+def stage_sequence(limit=None):
+    rows = sequence_rows(limit)
     tr = [r for r in rows if r[1] == "train"]
     te = [r for r in rows if r[1] == "test"]
     sets = Counter(next(iter(r[2][5])) for r in tr)
@@ -388,15 +451,7 @@ def stage_sequence(limit=None):
                   "sets_kept": len(keep), "C": {}, "logloss": {}, "brier": {}, "calibration": {}}
     for k, blocks in MODELS.items():
         Xtr, Xte, _ = seq.design(X(tr, blocks), X(te, blocks))
-        cv = {}
-        for C in (0.001, 0.01, 0.1, 1.0):
-            ls = []
-            for a, b in GroupKFold(5).split(Xtr, ytr, gtr):
-                p = LogisticRegression(C=C, max_iter=2000).fit(Xtr[a], ytr[a]).predict_proba(Xtr[b])[:, 1]
-                ls.append(log_loss(ytr[b], p, labels=[0, 1]))
-            cv[C] = float(np.mean(ls))
-        C = min(cv, key=cv.get)
-        p = np.clip(LogisticRegression(C=C, max_iter=2000).fit(Xtr, ytr).predict_proba(Xte)[:, 1], 1e-12, 1 - 1e-12)
+        C, p = logit_cv(Xtr, ytr, gtr, Xte)
         L[k] = -(yte * np.log(p) + (1 - yte) * np.log(1 - p))
         res["C"][k], res["logloss"][k], res["brier"][k] = C, float(L[k].mean()), float(((p - yte) ** 2).mean())
         q = np.quantile(p, np.linspace(0, 1, 11))
@@ -438,22 +493,7 @@ def stage_seasons(limit=None):
         keep = {t for t, n in played.items() if n >= MIN_MATCHES}
         if not keep:
             continue
-        G, U, xg = defaultdict(list), defaultdict(Counter), Counter()
-        with ThreadPoolExecutor(8) as ex:
-            pairs = list(ex.map(lambda m: (get(f"events/{m['match_id']}.json"), get(f"lineups/{m['match_id']}.json")),
-                                [m for m in ms if m["home_team"]["home_team_id"] in keep or m["away_team"]["away_team_id"] in keep]))
-        for ev, lu in pairs:
-            for t in lu:
-                for q in t["lineup"]:
-                    out["names"][q["player_id"]] = q.get("player_nickname") or q["player_name"]
-            for g in sb.attack_groups(ev):
-                if g["team"] in keep:
-                    G[g["team"]].append((g["A"], g["xg"]))
-            for e in ev:
-                if e["team"]["id"] in keep and e["type"]["name"] in sb.ON and e["team"]["id"] == e["possession_team"]["id"]:
-                    U[e["team"]["id"]][e["player"]["id"]] += 1
-                if e["team"]["id"] in keep and sb.openplay(e):
-                    xg[e["team"]["id"]] += e["shot"]["statsbomb_xg"]
+        G, U, xg = season_tally(ms, keep, out["names"])
         for t in sorted(keep):
             if len(G[t]) < MIN_CHANCES:
                 continue
@@ -462,6 +502,27 @@ def stage_seasons(limit=None):
                                  "groups": attack.agg(G[t]), **{k: M[k] for k in ("m", "xg", "tau", "tau_star", "nu", "cov", "T_tau", "usage", "solo")}})
             out["competitions"][-1]["measured"] += 1
     return out
+
+
+def season_tally(ms, keep, names):
+    """Chances G, on-ball actions U and open-play xG of the teams in keep over matches ms; player names are added to names."""
+    G, U, xg = defaultdict(list), defaultdict(Counter), Counter()
+    with ThreadPoolExecutor(8) as ex:
+        pairs = list(ex.map(lambda m: (get(f"events/{m['match_id']}.json"), get(f"lineups/{m['match_id']}.json")),
+                            [m for m in ms if m["home_team"]["home_team_id"] in keep or m["away_team"]["away_team_id"] in keep]))
+    for ev, lu in pairs:
+        for t in lu:
+            for q in t["lineup"]:
+                names[q["player_id"]] = q.get("player_nickname") or q["player_name"]
+        for g in sb.attack_groups(ev):
+            if g["team"] in keep:
+                G[g["team"]].append((g["A"], g["xg"]))
+        for e in ev:
+            if e["team"]["id"] in keep and e["type"]["name"] in sb.ON and e["team"]["id"] == e["possession_team"]["id"]:
+                U[e["team"]["id"]][e["player"]["id"]] += 1
+            if e["team"]["id"] in keep and sb.openplay(e):
+                xg[e["team"]["id"]] += e["shot"]["statsbomb_xg"]
+    return G, U, xg
 
 
 # ---------------------------------------------------------------- Wyscout public data (descriptive)
@@ -497,38 +558,19 @@ def xg_model(limit=None):
 def stage_wyscout(limit=None):
     """Attack measures for every team with at least MIN_MATCHES matches in the Wyscout public data (2017/18 five
     leagues, World Cup 2018, Euro 2016). xG from xg_model; calibration against Wyscout goals is reported."""
-    blob = wy_load()
-    players = {p["wyId"]: p for p in json.loads(blob["players"])}
-    teams = {t["wyId"]: wy.unescape(t["name"]) for t in json.loads(blob["teams"])}
+    players, teams, zE, zM = wy_load()
     f, fit = xg_model(limit)
-    zE, zM = zipfile.ZipFile(io.BytesIO(blob["events"])), zipfile.ZipFile(io.BytesIO(blob["matches"]))
     out = {"source": "Wyscout public data (Pappalardo et al. 2019, CC BY 4.0)", "xg_model": fit, "competitions": [], "teams": [], "names": {}}
     for nm, (comp, season, intl) in WY_COMP.items():
         ms = json.loads(zM.read(f"matches_{nm}.json"))
         ms = ms[:limit] if limit else ms
-        mids = {m["wyId"] for m in ms}
         played = Counter(int(t) for m in ms for t in m["teamsData"])
-        ev = [e for e in json.loads(zE.read(f"events_{nm}.json")) if e["matchId"] in mids]
-        by = defaultdict(list)
-        for e in ev:
-            by[e["matchId"]].append(e)
         key = f"wy/{nm}"
         rec = {"key": key, "competition": comp, "season": season, "gender": "male", "international": intl, "matches": len(ms),
                "teams": len(played), "measured": 0, "matches_360": 0, "source": "Wyscout"}
         out["competitions"].append(rec)
         keep = {t for t, n in played.items() if n >= MIN_MATCHES}
-        G, U = defaultdict(list), defaultdict(Counter)
-        goals = pred = 0.0
-        for E in by.values():
-            for g in wy.attack_groups(E):
-                x = float(f.predict_proba(np.array([s[:3] for s in g["shots"]]))[:, 1].sum())
-                pred += x
-                goals += sum(s[3] for s in g["shots"])
-                if g["team"] in keep:
-                    G[g["team"]].append((g["A"], x))
-            for e in E:
-                if e["teamId"] in keep and wy.onball(e) and e["playerId"]:
-                    U[e["teamId"]][f"w{e['playerId']}"] += 1
+        G, U, goals, pred = wy_tally(wy_events(zE, nm, {m["wyId"] for m in ms}), f, keep)
         rec["xg_check"] = {"open_play_goals": goals, "predicted": pred}
         for t in sorted(keep):
             if len(G[t]) < MIN_CHANCES:
@@ -538,11 +580,45 @@ def stage_wyscout(limit=None):
                                  "xg_per_match": sum(x for _, x in G[t]) / played[t], "groups": attack.agg(G[t]),
                                  **{k: M[k] for k in ("m", "xg", "tau", "tau_star", "nu", "cov", "T_tau", "usage", "solo")}})
             rec["measured"] += 1
-            for p in {v for A, _ in G[t] for v in A}:
-                q = players.get(int(p[1:]))
-                if q:
-                    out["names"][p] = wy.unescape(q["shortName"])
+            out["names"].update(wy_names(players, {v for A, _ in G[t] for v in A}))
     return out
+
+
+def wy_tally(by, f, keep):
+    """Over Wyscout events by match: chances G and on-ball actions U of the teams in keep, and the open-play goals and
+    xG (model f) of every team."""
+    G, U = defaultdict(list), defaultdict(Counter)
+    goals = pred = 0.0
+    for E in by.values():
+        for g in wy.attack_groups(E):
+            x = wy_xg(f, g["shots"])
+            pred += x
+            goals += sum(s[3] for s in g["shots"])
+            if g["team"] in keep:
+                G[g["team"]].append((g["A"], x))
+        for e in E:
+            if e["teamId"] in keep and wy.onball(e) and e["playerId"]:
+                U[e["teamId"]][f"w{e['playerId']}"] += 1
+    return G, U, goals, pred
+
+
+def wy_xg(f, shots):
+    """xG of one Wyscout chance: model f summed over its shots."""
+    return float(f.predict_proba(np.array([s[:3] for s in shots]))[:, 1].sum())
+
+
+def wy_events(zE, nm, mids):
+    """Events of competition nm in the archive zE, by match, for the matches mids."""
+    by = defaultdict(list)
+    for e in json.loads(zE.read(f"events_{nm}.json")):
+        if e["matchId"] in mids:
+            by[e["matchId"]].append(e)
+    return by
+
+
+def wy_names(players, P):
+    """Display names of the 'w'-prefixed player ids P found in players."""
+    return {p: wy.unescape(q["shortName"]) for p in P if (q := players.get(int(p[1:])))}
 
 
 # ---------------------------------------------------------------- structure (review phase 2, exploratory)
@@ -645,20 +721,27 @@ def summary(T):
             y = np.array([S(t, "test", lv)["null"]["N0"][k]["obs"] - S(t, "test", lv)["null"]["N0"][k]["mean"] for t in teams])
             r1[f"{k} excess over N0"] = {"icc": [mu.icc(x, y), boot(lambda i: mu.icc(x[i], y[i]), len(x))], "spearman": rho(x, y), "teams": len(teams)}
         out["R1"][lv] = r1
-        out["R2"][lv] = {}
-        for n in S(teams[0], "season", lv)["null"]:
-            out["R2"][lv][n] = {}
-            for k in STRUCT:
-                e = [S(t, "season", lv)["null"][n][k] for t in teams]
-                se = [S(t, "season", lv)[k][1] for t in teams]
-                ok = [i for i, v in enumerate(se) if v > 0]
-                if not ok:
-                    continue
-                # variance of an excess: the observed value's match-resampling variance plus that of the null mean
-                m_, s_, t2 = mu.pool([e[i]["obs"] - e[i]["mean"] for i in ok], [se[i] ** 2 + e[i]["sd"] ** 2 / NR for i in ok])
-                out["R2"][lv][n][k] = {"mean_excess": m_, "se": s_, "tau2": t2, "teams": len(ok),
-                                       "z_above_2": int(sum(x["z"] > 2 for x in e)), "z_below_-2": int(sum(x["z"] < -2 for x in e))}
+        out["R2"][lv] = pooled([S(t, "season", lv) for t in teams])
     return out
+
+
+def pooled(V):
+    """R2: each structural statistic's excess over each null, pooled across teams by mu.pool; V: the teams'
+    full-season results at one level."""
+    R2 = {}
+    for n in V[0]["null"]:
+        R2[n] = {}
+        for k in STRUCT:
+            e = [v["null"][n][k] for v in V]
+            se = [v[k][1] for v in V]
+            ok = [i for i, s in enumerate(se) if s > 0]
+            if not ok:
+                continue
+            # variance of an excess: the observed value's match-resampling variance plus that of the null mean
+            m_, s_, t2 = mu.pool([e[i]["obs"] - e[i]["mean"] for i in ok], [se[i] ** 2 + e[i]["sd"] ** 2 / NR for i in ok])
+            R2[n][k] = {"mean_excess": m_, "se": s_, "tau2": t2, "teams": len(ok),
+                        "z_above_2": int(sum(x["z"] > 2 for x in e)), "z_below_-2": int(sum(x["z"] < -2 for x in e))}
+    return R2
 
 
 def merge(stage):
@@ -693,51 +776,67 @@ def explore(C, PP, res, status, power):
     ch = {k: [(A, x) for _, A, x, _ in v] for k, v in C.items()}
     teams = sorted({t for t, W in ch if (t, "train") in ch and (t, "test") in ch})
     g = np.random.default_rng(SEED)
-    out = {"settings": {"seed": SEED, "status": status}, "R3": {}, "R4": {}, "R5": {}, "power": {}}
-    # R3: held-out coverage of b players chosen on the first half
-    for b in range(1, 6):
-        cv = defaultdict(list)
-        for t in teams:
-            for k, S in protocol.select(ch[(t, "train")], PP[(t, "train")], b).items():
-                cv[k].append(mu.c(S, ch[(t, "test")]))
-        cv = {k: np.array(v) for k, v in cv.items()}
-        out["R3"][b] = {"mean": {k: float(v.mean()) for k, v in cv.items()},
-                        "exact_minus": {k: [float((cv["exact"] - v).mean()), boot(lambda i: (cv["exact"] - v)[i].mean(), len(v))]
-                                        for k, v in cv.items() if k != "exact"}}
-    # R4: second-half matches; absent = players with first-half phi who appeared in some second-half match but not this one
+    out = {"settings": {"seed": SEED, "status": status}, "R3": selection(ch, PP, teams), "R4": {}, "R5": {}, "power": {}}
     phi = {t: mu.phi(ch[(t, "train")]) for t in teams}
     Ct = {t: mu.cb(ch[(t, "train")], 2)[0] for t in teams}
-    squad = defaultdict(set)
-    for t, o, W, h, xg, gf, ga, ap in res:
-        if W == "test":
-            squad[t] |= ap
-    rows = [{"team": t, "opp": o, "home": h, "y": xg, "C": Ct[t],
-             "a": sum(x for v, x in phi[t].items() if v in squad[t] and v not in ap)}
-            for t, o, W, h, xg, gf, ga, ap in res if W == "test" and t in phi]
+    rows = absence_rows(res, phi, Ct)
     b4, d4, _, disp = protocol.fit4(rows)
     ci = protocol.boot4(rows, 500, g)
     out["R4"] = {"beta": [b4, ci[0]], "delta": [d4, ci[1]], "dispersion": disp, "matches": len(rows),
                  "share_with_absence": float(np.mean([r["a"] > 0 for r in rows])), "mean_absent_phi": float(np.mean([r["a"] for r in rows]))}
     if power:
         out["power"]["R4"] = protocol.power4(rows, [0.25, 0.5, 1.0, 2.0], NP, g)
-    # R5: second-half xG and points per match from first-half xG per match, with and without structure
+    out["R5"] = prediction(res, teams, phi, Ct)
+    if power:   # R1 at the confirmation cohort's size: lower bound of the ICC above 0.3
+        out["power"]["R1"] = {"teams": WY_TEAMS, "lower_bound": 0.3,
+                              "power": {r: protocol.icc_power(r, WY_TEAMS, 0.3, NP, 500, g) for r in (0.3, 0.4, 0.5, 0.6)}}
+    out["teams"] = len(teams)
+    return out
+
+
+def absence_rows(res, phi, Ct):
+    """R4 rows of the second-half matches: absent = players with first-half phi who appeared in some second-half
+    match but not this one."""
+    squad = defaultdict(set)
+    for t, o, W, h, xg, gf, ga, ap in res:
+        if W == "test":
+            squad[t] |= ap
+    return [{"team": t, "opp": o, "home": h, "y": xg, "C": Ct[t],
+             "a": sum(x for v, x in phi[t].items() if v in squad[t] and v not in ap)}
+            for t, o, W, h, xg, gf, ga, ap in res if W == "test" and t in phi]
+
+
+def selection(ch, PP, teams):
+    """R3: held-out coverage of b = 1..5 players chosen on the first half by each rule, and exact minus each other rule."""
+    R3 = {}
+    for b in range(1, 6):
+        cv = defaultdict(list)
+        for t in teams:
+            for k, S in protocol.select(ch[(t, "train")], PP[(t, "train")], b).items():
+                cv[k].append(mu.c(S, ch[(t, "test")]))
+        cv = {k: np.array(v) for k, v in cv.items()}
+        R3[b] = {"mean": {k: float(v.mean()) for k, v in cv.items()},
+                 "exact_minus": {k: [float((cv["exact"] - v).mean()), boot(lambda i: (cv["exact"] - v)[i].mean(), len(v))]
+                                 for k, v in cv.items() if k != "exact"}}
+    return R3
+
+
+def prediction(res, teams, phi, Ct):
+    """R5: second-half xG and points per match from first-half xG per match, with and without structure (D1 of phi, c(2))."""
     per = defaultdict(lambda: defaultdict(list))
     for t, o, W, h, xg, gf, ga, ap in res:
         per[(t, W)]["xg"].append(xg)
         per[(t, W)]["pts"].append(3 if gf > ga else 1 if gf == ga else 0)
     x0 = np.array([np.mean(per[(t, "train")]["xg"]) for t in teams])
     S = np.array([[mu.hill(phi[t].values(), 1), Ct[t]] for t in teams])
+    R5 = {}
     for k in ("xg", "pts"):
         y = np.array([np.mean(per[(t, "test")][k]) for t in teams])
         base, full = protocol.loo_r2(x0[:, None], y), protocol.loo_r2(np.column_stack([x0, S]), y)
         inc = lambda i: protocol.loo_r2(np.column_stack([x0[i], S[i]]), y[i]) - protocol.loo_r2(x0[i][:, None], y[i])
-        out["R5"][k] = {"loo_r2_base": base, "loo_r2_with_structure": full, "increment": [full - base, boot(inc, len(y))],
-                        "structure": ["D1 of phi", "c(2)"]}
-    if power:   # R1 at the confirmation cohort's size: lower bound of the ICC above 0.3
-        out["power"]["R1"] = {"teams": WY_TEAMS, "lower_bound": 0.3,
-                              "power": {r: protocol.icc_power(r, WY_TEAMS, 0.3, NP, 500, g) for r in (0.3, 0.4, 0.5, 0.6)}}
-    out["teams"] = len(teams)
-    return out
+        R5[k] = {"loo_r2_base": base, "loo_r2_with_structure": full, "increment": [full - base, boot(inc, len(y))],
+                 "structure": ["D1 of phi", "c(2)"]}
+    return R5
 
 
 # ---------------------------------------------------------------- confirm (review phase 4: Wyscout 2017/18, once)
@@ -747,21 +846,21 @@ WY_LEAGUES = ("England", "Spain", "Germany", "Italy", "France")
 
 
 def wy_load():
-    """The four Wyscout figshare files as bytes (FHA_WY_DIR: a local folder holding them, for smoke tests)."""
+    """The four Wyscout figshare files (FHA_WY_DIR: a local folder holding them, for smoke tests): players by id, team
+    names by id, and the events and matches archives."""
     local = os.environ.get("FHA_WY_DIR")
     name = {"events": "events.zip", "matches": "matches.zip", "players": "players.json", "teams": "teams.json"}
-    return {k: (Path(local, name[k]).read_bytes() if local else urllib.request.urlopen(FIG + v, timeout=600).read()) for k, v in WY_FILES.items()}
+    blob = {k: (Path(local, name[k]).read_bytes() if local else urllib.request.urlopen(FIG + v, timeout=600).read()) for k, v in WY_FILES.items()}
+    return ({p["wyId"]: p for p in json.loads(blob["players"])}, {t["wyId"]: wy.unescape(t["name"]) for t in json.loads(blob["teams"])},
+            zipfile.ZipFile(io.BytesIO(blob["events"])), zipfile.ZipFile(io.BytesIO(blob["matches"])))
 
 
 def wy_collect(limit):
     """Wyscout 2017/18 leagues in the shapes structure() and explore() take. Halves: gameweeks up to half the
     season's last gameweek, then the rest. Roles: Wyscout's player role (GK, DF, MD, FW). A completed pass's
     recipient is the player of the next event of the same possession, when it is a teammate."""
-    blob = wy_load()
-    players = {p["wyId"]: p for p in json.loads(blob["players"])}
-    tname = {t["wyId"]: wy.unescape(t["name"]) for t in json.loads(blob["teams"])}
+    players, tname, zE, zM = wy_load()
     f, _ = xg_model(limit)
-    zE, zM = zipfile.ZipFile(io.BytesIO(blob["events"])), zipfile.ZipFile(io.BytesIO(blob["matches"]))
     C, PP, res = defaultdict(list), defaultdict(Counter), []
     names, league = {}, {}
     role = lambda v: players.get(int(v[1:]), {}).get("role", {}).get("code2", "NA")
@@ -769,37 +868,31 @@ def wy_collect(limit):
         ms = json.loads(zM.read(f"matches_{nm}.json"))
         ms = ms[:limit] + ms[-limit:] if limit else ms
         half = max(m["gameweek"] for m in ms) // 2
-        by = defaultdict(list)
-        mids = {m["wyId"] for m in ms}
-        for e in json.loads(zE.read(f"events_{nm}.json")):
-            if e["matchId"] in mids:
-                by[e["matchId"]].append(e)
+        by = wy_events(zE, nm, {m["wyId"] for m in ms})
         for m in ms:
             W = "train" if m["gameweek"] <= half else "test"
             E = by[m["wyId"]]
             xg = Counter()
             for gr in wy.attack_groups(E):
-                x = float(f.predict_proba(np.array([q[:3] for q in gr["shots"]]))[:, 1].sum())
+                x = wy_xg(f, gr["shots"])
                 xg[gr["team"]] += x
                 C[(gr["team"], W)].append((m["wyId"], gr["A"], x, {v: role(v) for v in gr["A"]}))
-            for P in wy.possessions(E):
-                for e, n in zip(P, P[1:]):
-                    if wy.control(e) and e["eventName"] == "Pass" and n["teamId"] == e["teamId"] and n["playerId"] and n["playerId"] != e["playerId"]:
-                        PP[(e["teamId"], W)][(f"w{e['playerId']}", f"w{n['playerId']}")] += 1
+            wy_passes(E, W, PP)
             T = {int(t): d for t, d in m["teamsData"].items()}
             for t, d in T.items():
                 o = next(u for u in T if u != t)
-                fm = d.get("formation") or {}
-                ap = {f"w{q['playerId']}" for q in fm.get("lineup", [])} | {f"w{q['playerIn']}" for q in fm.get("substitutions") or [] if isinstance(q, dict) and q.get("playerIn")}
-                res.append((t, o, W, int(d["side"] == "home"), xg[t], d["score"], T[o]["score"], ap))
+                res.append((t, o, W, int(d["side"] == "home"), xg[t], d["score"], T[o]["score"], wy.appeared(d)))
                 names[t], league[t] = tname.get(t, str(t)), nm
-    for (t, _), v in C.items():
-        for _, A, _, _ in v:
-            for p in A:
-                q = players.get(int(p[1:]))
-                if q:
-                    names[p] = wy.unescape(q["shortName"])
+    names.update(wy_names(players, (p for v in C.values() for _, A, _, _ in v for p in A)))
     return C, PP, res, names, league
+
+
+def wy_passes(E, W, PP):
+    """Completed passes of one match's events E, added to PP[(team, W)] as (passer, recipient) counts."""
+    for P in wy.possessions(E):
+        for e, n in zip(P, P[1:]):
+            if wy.control(e) and e["eventName"] == "Pass" and n["teamId"] == e["teamId"] and n["playerId"] and n["playerId"] != e["playerId"]:
+                PP[(e["teamId"], W)][(f"w{e['playerId']}", f"w{n['playerId']}")] += 1
 
 
 def stage_confirm(limit=None):
@@ -820,9 +913,6 @@ def stage_confirm(limit=None):
 # ---------------------------------------------------------------- lineups (H6, gated)
 
 def stage_lineup(limit=None):
-    from scipy.sparse import csr_matrix, hstack
-    from sklearn.linear_model import Ridge
-    from sklearn.model_selection import GroupKFold
     S = {"train": [], "test": []}       # (match, stint)
     names, team_of = {}, {}
     for c, s in LEAGUES:
@@ -835,67 +925,13 @@ def stage_lineup(limit=None):
                 for p in t["lineup"]:
                     names[p["player_id"]] = p.get("player_nickname") or p["player_name"]
                     team_of[p["player_id"]] = t["team_id"]
-            T = lambda e: sb.u(e["minute"] + e["second"] / 60, e["period"])
-            spans = []
-            for P in sorted({e["period"] for e in ev if e["period"] <= 4}):
-                hs = [T(e) for e in ev if e["period"] == P and e["type"]["name"] in ("Half Start", "Half End")]
-                spans.append((min(hs), max(hs)))
-            shots = [(T(e), e["team"]["id"], e["shot"]["statsbomb_xg"]) for e in ev if sb.openplay(e)]
-            goals = [(T(e), e["team"]["id"]) for e in ev if (e["type"]["name"] == "Shot" and e["shot"]["outcome"]["name"] == "Goal") or e["type"]["name"] == "Own Goal For"]
-            for st in sb.stints(lu, h, a, shots, spans):
-                st["diff"] = max(-2, min(2, sum(1 if g == h else -1 for t, g in goals if t < st["t0"])))
-                S[W].append((m["match_id"], h, a, st))
+            S[W] += [(m["match_id"], h, a, st) for st in match_stints(ev, lu, h, a)]
     out = {"windows": {}}
     beta, mins_w = {}, {}
     for W, R in S.items():
-        mins, off = Counter(), defaultdict(lambda: [0.0, set()])
-        played = defaultdict(set)
-        for mid, h, a, st in R:
-            d = st["t1"] - st["t0"]
-            for side in ("home", "away"):
-                for v in st[side]:
-                    mins[v] += d
-                    played[v].add(mid)
-        roster = defaultdict(set)
-        for v in played:
-            roster[team_of[v]].add(v)
-        for mid, h, a, st in R:
-            d = st["t1"] - st["t0"]
-            for team, side in ((h, "home"), (a, "away")):
-                for v in roster[team] - st[side]:
-                    off[v][0] += d
-                    off[v][1].add(mid)
-        ok = {v for v in mins if mins[v] >= 900 and off[v][0] >= 270 and len(off[v][1]) >= 5}
-        ids = sorted(mins)
-        ix = {v: i for i, v in enumerate(ids)}
-        rows, cols, vals, y, wt, g, Z = [], [], [], [], [], [], []
-        for r, (mid, h, a, st) in enumerate(R):
-            d = st["t1"] - st["t0"]
-            for v in st["home"]:
-                rows.append(r), cols.append(ix[v]), vals.append(1.0)
-            for v in st["away"]:
-                rows.append(r), cols.append(ix[v]), vals.append(-1.0)
-            Z.append([st["manpower"], st["diff"]])
-            y.append(90 * (st["xg_home"] - st["xg_away"]) / d)
-            wt.append(d)
-            g.append(mid)
-        n = len(ids)
-        X = csr_matrix((vals, (rows, cols)), shape=(len(R), n))
-        X = hstack([X, csr_matrix(np.array(Z, float))]).tocsr()
-        y, wt, g = np.array(y), np.array(wt), np.array(g)
-        cv = {}
-        for lam in (10.0, 100.0, 1000.0, 10000.0):
-            e = []
-            for i, j in GroupKFold(5).split(X, y, g):
-                f = Ridge(alpha=lam).fit(X[i], y[i], sample_weight=wt[i])
-                e.append(float(np.average((f.predict(X[j]) - y[j]) ** 2, weights=wt[j])))
-            cv[lam] = float(np.mean(e))
-        lam = min(cv, key=cv.get)
-        f = Ridge(alpha=lam).fit(X, y, sample_weight=wt)
-        beta[W] = {v: float(f.coef_[ix[v]]) for v in ok}
+        mins, ok = exposure(R, team_of)
+        beta[W], out["windows"][W] = ratings(R, mins, ok)
         mins_w[W] = {v: mins[v] for v in ok}
-        out["windows"][W] = {"stints": len(R), "players": n, "eligible": len(ok), "lambda": lam, "cv_mse": cv,
-                             "home_intercept": float(f.intercept_), "manpower": float(f.coef_[n]), "score_diff": float(f.coef_[n + 1])}
     both = sorted(set(beta["train"]) & set(beta["test"]))
     out["eligible_both"] = len(both)
     out["ratings"] = {v: [beta["train"][v], beta["test"][v], mins_w["train"][v], mins_w["test"][v]] for v in both}
@@ -907,6 +943,81 @@ def stage_lineup(limit=None):
             out["top"] = [[names[v], b] for b, v in avg[::-1][:15]]
             out["bottom"] = [[names[v], b] for b, v in avg[:15]]
     return out
+
+
+def match_stints(ev, lu, h, a):
+    """Stints of one match (sb.stints) on its played spans, each with the home score difference at its start, clipped to +-2."""
+    T = lambda e: sb.u(e["minute"] + e["second"] / 60, e["period"])
+    spans = []
+    for P in sorted({e["period"] for e in ev if e["period"] <= 4}):
+        hs = [T(e) for e in ev if e["period"] == P and e["type"]["name"] in ("Half Start", "Half End")]
+        spans.append((min(hs), max(hs)))
+    shots = [(T(e), e["team"]["id"], e["shot"]["statsbomb_xg"]) for e in ev if sb.openplay(e)]
+    goals = [(T(e), e["team"]["id"]) for e in ev if sb.goal(e)]
+    S = sb.stints(lu, h, a, shots, spans)
+    for st in S:
+        st["diff"] = max(-2, min(2, sum(1 if g == h else -1 for t, g in goals if t < st["t0"])))
+    return S
+
+
+def exposure(R, team_of):
+    """Minutes on the pitch of each player in stints R, and the players eligible for a rating: at least 900 minutes
+    on and 270 team minutes off over 5 or more matches."""
+    mins, off = Counter(), defaultdict(lambda: [0.0, set()])
+    played = defaultdict(set)
+    for mid, h, a, st in R:
+        d = st["t1"] - st["t0"]
+        for side in ("home", "away"):
+            for v in st[side]:
+                mins[v] += d
+                played[v].add(mid)
+    roster = defaultdict(set)
+    for v in played:
+        roster[team_of[v]].add(v)
+    for mid, h, a, st in R:
+        d = st["t1"] - st["t0"]
+        for team, side in ((h, "home"), (a, "away")):
+            for v in roster[team] - st[side]:
+                off[v][0] += d
+                off[v][1].add(mid)
+    return mins, {v for v in mins if mins[v] >= 900 and off[v][0] >= 270 and len(off[v][1]) >= 5}
+
+
+def ratings(R, mins, ok):
+    """Ridge ratings over stints R: open-play xG difference per 90 on home-minus-away player indicators, manpower and
+    score difference, weighted by stint length, penalty chosen by 5-fold match-grouped CV. Returns (rating of each
+    eligible player in ok, window summary)."""
+    from scipy.sparse import csr_matrix, hstack
+    from sklearn.linear_model import Ridge
+    from sklearn.model_selection import GroupKFold
+    ids = sorted(mins)
+    ix = {v: i for i, v in enumerate(ids)}
+    rows, cols, vals, y, wt, g, Z = [], [], [], [], [], [], []
+    for r, (mid, h, a, st) in enumerate(R):
+        d = st["t1"] - st["t0"]
+        for v in st["home"]:
+            rows.append(r), cols.append(ix[v]), vals.append(1.0)
+        for v in st["away"]:
+            rows.append(r), cols.append(ix[v]), vals.append(-1.0)
+        Z.append([st["manpower"], st["diff"]])
+        y.append(90 * (st["xg_home"] - st["xg_away"]) / d)
+        wt.append(d)
+        g.append(mid)
+    n = len(ids)
+    X = csr_matrix((vals, (rows, cols)), shape=(len(R), n))
+    X = hstack([X, csr_matrix(np.array(Z, float))]).tocsr()
+    y, wt, g = np.array(y), np.array(wt), np.array(g)
+    cv = {}
+    for lam in (10.0, 100.0, 1000.0, 10000.0):
+        e = []
+        for i, j in GroupKFold(5).split(X, y, g):
+            f = Ridge(alpha=lam).fit(X[i], y[i], sample_weight=wt[i])
+            e.append(float(np.average((f.predict(X[j]) - y[j]) ** 2, weights=wt[j])))
+        cv[lam] = float(np.mean(e))
+    lam = min(cv, key=cv.get)
+    f = Ridge(alpha=lam).fit(X, y, sample_weight=wt)
+    return {v: float(f.coef_[ix[v]]) for v in ok}, {"stints": len(R), "players": n, "eligible": len(ok), "lambda": lam, "cv_mse": cv,
+                                                    "home_intercept": float(f.intercept_), "manpower": float(f.coef_[n]), "score_diff": float(f.coef_[n + 1])}
 
 
 if __name__ == "__main__":

@@ -55,6 +55,12 @@ def unescape(s):
     return json.loads(f'"{s}"') if "\\u" in s else s
 
 
+def appeared(d):
+    """Players of one match's teamsData entry d who appeared: the starting lineup and the players brought on."""
+    fm = d.get("formation") or {}
+    return {f"w{q['playerId']}" for q in fm.get("lineup", [])} | {f"w{q['playerIn']}" for q in fm.get("substitutions") or [] if isinstance(q, dict) and q.get("playerIn")}
+
+
 def attack_groups(ev, k=3):
     """One record per possession with an open-play shot (eventName Shot): the last k distinct actors up to the first one."""
     out = []
