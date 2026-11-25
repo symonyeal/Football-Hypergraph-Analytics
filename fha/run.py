@@ -93,7 +93,15 @@ def collect(limit, leagues=LEAGUES):
             for g in sb.attack_groups(ev):
                 G[(g["team"], W)].append((g["A"], g["xg"]))
                 C[(g["team"], W)].append((m["match_id"], g["A"], g["xg"], {v: ro[v] for v in g["A"]}))
-            xg = tally(ev, W, names, U, PP)
+            names.update({e["player"]["id"]: e["player"]["name"] for e in ev if "player" in e})
+            on, passes, shots = counts(ev)
+            for (t, p), n in on.items():
+                U[(t, W)][p] += n
+            for (t, p, r), n in passes.items():
+                PP[(t, W)][(p, r)] += n
+            xg = Counter()
+            for t, x in shots:
+                xg[t] += x
             score = {h: m["home_score"], a: m["away_score"]}
             for t in lu:
                 st = {p["player_id"] for p in t["lineup"] if any(q["start_reason"] == "Starting XI" for q in p["positions"])}
@@ -104,19 +112,22 @@ def collect(limit, leagues=LEAGUES):
     return G, U, names, league, games, {"chances": C, "passes": PP, "results": res}
 
 
-def tally(ev, W, names, U, PP):
-    """Event counts of one match in window W, added to names, U and PP as in collect(); returns open-play xG per team."""
-    xg = Counter()
+def counts(ev, keep=None):
+    """Counts of one match's events ev for the teams in keep (all when None): on-ball actions by the team in
+    possession {(team, player): n}, completed passes {(team, passer, recipient): n} and open-play shots
+    [(team, xG)] in event order, so that summing them reproduces the running totals."""
+    on, passes, shots = Counter(), Counter(), []
     for e in ev:
-        if "player" in e:
-            names[e["player"]["id"]] = e["player"]["name"]
-        if e["type"]["name"] in sb.ON and e["team"]["id"] == e["possession_team"]["id"]:
-            U[(e["team"]["id"], W)][e["player"]["id"]] += 1
+        t = e["team"]["id"]
+        if keep is not None and t not in keep:
+            continue
+        if e["type"]["name"] in sb.ON and t == e["possession_team"]["id"]:
+            on[(t, e["player"]["id"])] += 1
         if sb.openplay(e):
-            xg[e["team"]["id"]] += e["shot"]["statsbomb_xg"]
+            shots.append((t, e["shot"]["statsbomb_xg"]))
         if e["type"]["name"] == "Pass" and "recipient" in e["pass"] and "outcome" not in e["pass"]:
-            PP[(e["team"]["id"], W)][(e["player"]["id"], e["pass"]["recipient"]["id"])] += 1
-    return xg
+            passes[(t, e["player"]["id"], e["pass"]["recipient"]["id"])] += 1
+    return on, passes, shots
 
 
 def measures(Fw, U):
@@ -517,11 +528,11 @@ def season_tally(ms, keep, names):
         for g in sb.attack_groups(ev):
             if g["team"] in keep:
                 G[g["team"]].append((g["A"], g["xg"]))
-        for e in ev:
-            if e["team"]["id"] in keep and e["type"]["name"] in sb.ON and e["team"]["id"] == e["possession_team"]["id"]:
-                U[e["team"]["id"]][e["player"]["id"]] += 1
-            if e["team"]["id"] in keep and sb.openplay(e):
-                xg[e["team"]["id"]] += e["shot"]["statsbomb_xg"]
+        on, _, shots = counts(ev, keep)
+        for (t, p), n in on.items():
+            U[t][p] += n
+        for t, x in shots:
+            xg[t] += x
     return G, U, xg
 
 
